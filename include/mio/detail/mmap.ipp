@@ -52,6 +52,7 @@ inline DWORD int64_low(int64_t n) noexcept
     return n & 0xffffffff;
 }
 
+inline
 std::wstring s_2_ws(const std::string& s)
 {
     if (s.empty())
