@@ -1280,6 +1280,20 @@ public:
     }
 
     /**
+     * Overload for const char* to prevent implicit conversion to handle_type (void* on Windows).
+     */
+    basic_shared_mmap(const char* path, const size_type offset = 0, const size_type length = map_entire_file)
+    {
+        std::error_code error;
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+        } else {
+            map(std::filesystem::path(path), offset, length, error);
+        }
+        if(error) { throw std::system_error(error); }
+    }
+
+    /**
      * The same as invoking the `map` function, except any error that may occur
      * while establishing the mapping is wrapped in a `std::system_error` and is
      * thrown.
@@ -1502,6 +1516,32 @@ public:
     void map(const std::filesystem::path& path, std::error_code& error)
     {
         map_impl(path, 0, map_entire_file, error);
+    }
+
+    /**
+     * Overload for const char* to handle null pointers safely and prevent
+     * implicit conversion to handle_type (void* on Windows).
+     */
+    void map(const char* path, const size_type offset,
+        const size_type length, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map_impl(std::filesystem::path(path), offset, length, error);
+    }
+
+    /**
+     * Overload for const char* to handle null pointers safely.
+     */
+    void map(const char* path, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map_impl(std::filesystem::path(path), 0, map_entire_file, error);
     }
 
     /**
