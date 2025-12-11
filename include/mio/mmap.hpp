@@ -57,7 +57,12 @@ using file_handle_type = int;
 
 /// This value represents an invalid file handle type. This can be used to
 /// determine whether `basic_mmap::file_handle` is valid, for example.
-inline constexpr file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+#ifdef _WIN32
+// INVALID_HANDLE_VALUE is ((HANDLE)(LONG_PTR)-1), which is not constexpr-friendly on MSVC
+inline const file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+#else
+inline constexpr file_handle_type invalid_handle = -1;
+#endif
 
 template<access_mode AccessMode, typename ByteT>
 struct basic_mmap
