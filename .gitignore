@@ -1,5 +1,6 @@
 test/**
 !test/test.cpp
+!test/test_single_header.cpp
 !test/example.cpp
 !test/CMakeLists.txt
 build/

@@ -33,10 +33,7 @@ jobs:
             build_type: Release
 
           # macOS (Apple Clang)
-          - os: macos-13
-            compiler: apple-clang
-            build_type: Release
-          - os: macos-14
+          - os: macos-15
             compiler: apple-clang
             build_type: Release
 
