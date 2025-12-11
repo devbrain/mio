@@ -21,67 +21,208 @@
 #ifndef MIO_SHARED_MMAP_HEADER
 #define MIO_SHARED_MMAP_HEADER
 
+// -----------------------------------------------------------------------------
+// shared_mmap.hpp - Shared ownership memory-mapped file I/O
+// -----------------------------------------------------------------------------
+//
+// This header provides shared ownership variants of the basic_mmap classes.
+// While basic_mmap has move-only semantics (single ownership), shared_mmap
+// allows multiple owners to share the same memory mapping via std::shared_ptr.
+//
+// Key differences from basic_mmap:
+// - Copyable: Multiple shared_mmap instances can reference the same mapping
+// - Heap allocation: Uses std::shared_ptr internally (one allocation per mapping)
+// - Reference counting: Mapping is released when last owner is destroyed
+// - No throwing constructors: Use factory functions for error handling
+//
+// When to use shared_mmap vs basic_mmap:
+// - Use basic_mmap (default) when a single owner is sufficient
+// - Use shared_mmap when the mapping needs to be shared across components
+// - Use shared_mmap when lifetime management is complex or unclear
+//
+// API note:
+// Unlike basic_mmap, shared_mmap does NOT have throwing constructors from
+// file paths. This is intentional to avoid overload ambiguity on Windows where
+// char* can implicitly convert to both std::filesystem::path and void* (HANDLE).
+// Use the factory functions make_shared_mmap_source/make_shared_mmap_sink instead.
+//
+// Usage:
+//   std::error_code ec;
+//   auto file = mio::make_shared_mmap_source("data.bin", ec);
+//   if (ec) { handle_error(ec); }
+//
+//   // Multiple owners
+//   auto copy = file;  // Both share the same mapping
+//
+//   // Move from basic_mmap
+//   mio::mmap_source owned("data.bin");
+//   mio::shared_mmap_source shared(std::move(owned));
+//
+// -----------------------------------------------------------------------------
+
 #include "mio/mmap.hpp"
 
 #include <cassert>
-#include <system_error> // std::error_code
-#include <memory> // std::shared_ptr
+#include <system_error>
+#include <memory>
 
 namespace mio {
 
+// -----------------------------------------------------------------------------
+// basic_shared_mmap - Shared ownership memory mapping
+// -----------------------------------------------------------------------------
+
 /**
- * Exposes (nearly) the same interface as `basic_mmap`, but endows it with
- * `std::shared_ptr` semantics.
+ * A memory-mapped file region with shared ownership semantics.
  *
- * This is not the default behaviour of `basic_mmap` to avoid allocating on the heap if
- * shared semantics are not required.
+ * This class wraps a basic_mmap in a std::shared_ptr, allowing multiple
+ * owners to share the same memory mapping. The mapping is automatically
+ * released when the last shared_mmap referencing it is destroyed.
+ *
+ * Template parameters:
+ * @tparam AccessMode Either `access_mode::read` for read-only mappings or
+ *                    `access_mode::write` for read-write mappings.
+ * @tparam ByteT      The byte type for the mapped data (char, unsigned char, std::byte).
+ *
+ * Ownership semantics:
+ * - Copyable: Copies share the same underlying mapping (reference counted).
+ * - Movable: Moving transfers the shared_ptr (efficient, no mapping changes).
+ * - RAII: Last owner's destruction unmaps the file.
+ *
+ * API compatibility:
+ * - Exposes nearly the same interface as basic_mmap
+ * - Iterators, data(), size(), etc. work identically
+ * - Main difference: no throwing constructors from paths (use factories)
+ *
+ * Thread safety:
+ * - The shared_ptr itself is thread-safe for copying/assignment
+ * - Concurrent access to the mapped data requires external synchronization
+ *
+ * @see basic_mmap for single-ownership variant
+ * @see make_shared_mmap_source, make_shared_mmap_sink factory functions
  */
 template<
     access_mode AccessMode,
     typename ByteT
 > class basic_shared_mmap
 {
+    // The underlying single-owner mmap, wrapped in shared_ptr for ref counting
     using impl_type = basic_mmap<AccessMode, ByteT>;
     std::shared_ptr<impl_type> pimpl_;
 
 public:
-    using value_type = typename impl_type::value_type;
-    using size_type = typename impl_type::size_type;
-    using reference = typename impl_type::reference;
-    using const_reference = typename impl_type::const_reference;
-    using pointer = typename impl_type::pointer;
-    using const_pointer = typename impl_type::const_pointer;
-    using difference_type = typename impl_type::difference_type;
-    using iterator = typename impl_type::iterator;
-    using const_iterator = typename impl_type::const_iterator;
-    using reverse_iterator = typename impl_type::reverse_iterator;
-    using const_reverse_iterator = typename impl_type::const_reverse_iterator;
-    using iterator_category = typename impl_type::iterator_category;
-    using handle_type = typename impl_type::handle_type;
-    using mmap_type = impl_type;
+    // -------------------------------------------------------------------------
+    // Type aliases (mirror basic_mmap for compatibility)
+    // -------------------------------------------------------------------------
 
+    using value_type = typename impl_type::value_type;             ///< Byte type
+    using size_type = typename impl_type::size_type;               ///< Size/offset type
+    using reference = typename impl_type::reference;               ///< Byte reference
+    using const_reference = typename impl_type::const_reference;   ///< Const byte reference
+    using pointer = typename impl_type::pointer;                   ///< Data pointer
+    using const_pointer = typename impl_type::const_pointer;       ///< Const data pointer
+    using difference_type = typename impl_type::difference_type;   ///< Pointer difference
+    using iterator = typename impl_type::iterator;                 ///< Iterator type
+    using const_iterator = typename impl_type::const_iterator;     ///< Const iterator
+    using reverse_iterator = typename impl_type::reverse_iterator; ///< Reverse iterator
+    using const_reverse_iterator = typename impl_type::const_reverse_iterator; ///< Const reverse iterator
+    using iterator_category = typename impl_type::iterator_category;           ///< Iterator category
+    using handle_type = typename impl_type::handle_type;           ///< File handle type
+    using mmap_type = impl_type;                                   ///< Underlying mmap type
+
+    // -------------------------------------------------------------------------
+    // Constructors
+    // -------------------------------------------------------------------------
+
+    /**
+     * Default constructor. Creates an empty shared_mmap.
+     *
+     * An empty shared_mmap has is_open() == false and contains no mapping.
+     * Use map() or factory functions to establish a mapping.
+     */
     basic_shared_mmap() = default;
+
+    /**
+     * Copy constructor. Creates a new reference to the same mapping.
+     *
+     * After copying, both shared_mmaps point to the same underlying mapping.
+     * The mapping will remain valid until all references are destroyed.
+     * This is an O(1) operation (just copies a shared_ptr).
+     */
     basic_shared_mmap(const basic_shared_mmap&) = default;
+
+    /**
+     * Copy assignment. Replaces the current mapping reference.
+     *
+     * If this shared_mmap was the last reference to a previous mapping,
+     * that mapping is released. Then this object starts sharing the
+     * source's mapping.
+     */
     basic_shared_mmap& operator=(const basic_shared_mmap&) = default;
+
+    /**
+     * Move constructor. Transfers the mapping reference.
+     *
+     * The source shared_mmap becomes empty (is_open() == false).
+     * More efficient than copy when the source is no longer needed.
+     */
     basic_shared_mmap(basic_shared_mmap&&) = default;
+
+    /**
+     * Move assignment. Transfers the mapping reference.
+     *
+     * The source shared_mmap becomes empty. If this was the last reference
+     * to a previous mapping, that mapping is released first.
+     */
     basic_shared_mmap& operator=(basic_shared_mmap&&) = default;
 
-    /** Takes ownership of an existing mmap object. */
+    /**
+     * Constructs from a basic_mmap by taking ownership.
+     *
+     * The basic_mmap is moved into a new shared_ptr, enabling shared
+     * ownership. The source mmap is left in an unmapped state.
+     *
+     * This is useful for upgrading a single-owner mapping to shared ownership:
+     *   mio::mmap_source owned("data.bin");
+     *   mio::shared_mmap_source shared(std::move(owned));
+     *
+     * @param mmap The mmap to take ownership of (will be moved-from).
+     */
     basic_shared_mmap(mmap_type&& mmap)
         : pimpl_(std::make_shared<mmap_type>(std::move(mmap)))
     {}
 
-    /** Takes ownership of an existing mmap object. */
+    /**
+     * Assignment from a basic_mmap by taking ownership.
+     *
+     * Creates a new shared_ptr containing the moved mmap. Any previous
+     * mapping reference is released (and unmapped if this was the last ref).
+     *
+     * @param mmap The mmap to take ownership of.
+     * @return Reference to this object.
+     */
     basic_shared_mmap& operator=(mmap_type&& mmap)
     {
         pimpl_ = std::make_shared<mmap_type>(std::move(mmap));
         return *this;
     }
 
-    /** Initializes this object with an already established shared mmap. */
+    /**
+     * Constructs from an existing shared_ptr to a mmap.
+     *
+     * Allows integration with code that already manages mmap lifetime
+     * via shared_ptr. This shared_mmap becomes another owner of that mapping.
+     *
+     * @param mmap Shared pointer to an existing mmap (can be nullptr).
+     */
     basic_shared_mmap(std::shared_ptr<mmap_type> mmap) : pimpl_(std::move(mmap)) {}
 
-    /** Initializes this object with an already established shared mmap. */
+    /**
+     * Assignment from an existing shared_ptr.
+     *
+     * @param mmap Shared pointer to assign from.
+     * @return Reference to this object.
+     */
     basic_shared_mmap& operator=(std::shared_ptr<mmap_type> mmap)
     {
         pimpl_ = std::move(mmap);
@@ -90,167 +231,296 @@ public:
 
 
     /**
-     * If this is a read-write mapping and the last reference to the mapping,
-     * the destructor invokes sync. Regardless of the access mode, unmap is
-     * invoked as a final step.
+     * Destructor.
+     *
+     * Releases this object's reference to the shared mapping. If this was
+     * the last reference, the underlying mmap is destroyed (which unmaps
+     * the file and, for write mode, syncs changes to disk).
      */
     ~basic_shared_mmap() = default;
 
-    /** Returns the underlying `std::shared_ptr` instance that holds the mmap. */
-    [[nodiscard]] std::shared_ptr<mmap_type> get_shared_ptr() { return pimpl_; }
+    // -------------------------------------------------------------------------
+    // Shared pointer access
+    // -------------------------------------------------------------------------
 
     /**
-     * On UNIX systems 'file_handle' and 'mapping_handle' are the same. On Windows,
-     * however, a mapped region of a file gets its own handle, which is returned by
-     * 'mapping_handle'.
+     * Returns the underlying shared_ptr.
+     *
+     * Useful for:
+     * - Checking reference count: get_shared_ptr().use_count()
+     * - Comparing identity: a.get_shared_ptr() == b.get_shared_ptr()
+     * - Interop with code expecting shared_ptr<mmap_type>
+     *
+     * @return The shared_ptr managing the underlying mmap.
+     */
+    [[nodiscard]] std::shared_ptr<mmap_type> get_shared_ptr() { return pimpl_; }
+
+    // -------------------------------------------------------------------------
+    // Handle accessors
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the file handle used for the mapping.
+     *
+     * @return The file handle, or `invalid_handle` if not mapped.
+     * @see basic_mmap::file_handle()
      */
     [[nodiscard]] handle_type file_handle() const noexcept
     {
         return pimpl_ ? pimpl_->file_handle() : invalid_handle;
     }
 
+    /**
+     * Returns the mapping-specific handle.
+     *
+     * On POSIX, same as file_handle(). On Windows, returns the file
+     * mapping object handle.
+     *
+     * @return The mapping handle, or `invalid_handle` if not mapped.
+     */
     [[nodiscard]] handle_type mapping_handle() const noexcept
     {
         return pimpl_ ? pimpl_->mapping_handle() : invalid_handle;
     }
 
-    /** Returns whether a valid memory mapping has been created. */
+    // -------------------------------------------------------------------------
+    // State queries
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns true if a valid memory mapping exists.
+     *
+     * Checks both that the shared_ptr is valid and that the underlying
+     * mmap is open.
+     *
+     * @return true if the mapping is open and accessible.
+     */
     [[nodiscard]] bool is_open() const noexcept { return pimpl_ && pimpl_->is_open(); }
 
-    /** Returns true if a mapping was established. */
+    /**
+     * Returns true if memory has been mapped.
+     *
+     * @return true if a memory mapping exists.
+     */
     [[nodiscard]] bool is_mapped() const noexcept { return pimpl_ && pimpl_->is_mapped(); }
 
     /**
-     * Returns true if no mapping was established, that is, conceptually the
-     * same as though the length that was mapped was 0. This function is
-     * provided so that this class has Container semantics.
+     * Returns true if the mapping is empty (no data to access).
+     *
+     * Returns true if either:
+     * - The shared_ptr is null (no mapping established)
+     * - The underlying mmap has zero length
+     *
+     * @return true if size() == 0 or no mapping exists.
      */
     [[nodiscard]] bool empty() const noexcept { return !pimpl_ || pimpl_->empty(); }
 
+    // -------------------------------------------------------------------------
+    // Size queries
+    // -------------------------------------------------------------------------
+
     /**
-     * `size` and `length` both return the logical length, i.e. the number of bytes
-     * user requested to be mapped, while `mapped_length` returns the actual number of
-     * bytes that were mapped which is a multiple of the underlying operating system's
-     * page allocation granularity.
+     * Returns the logical size of the mapped region in bytes.
+     *
+     * @return Number of accessible bytes, or 0 if not mapped.
      */
     [[nodiscard]] size_type size() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
+
+    /**
+     * Returns the logical length of the mapped region in bytes.
+     *
+     * @return Number of accessible bytes, or 0 if not mapped.
+     */
     [[nodiscard]] size_type length() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
+
+    /**
+     * Returns the actual mapped length in bytes.
+     *
+     * May be larger than length() due to page alignment.
+     *
+     * @return Actual mapped size, or 0 if not mapped.
+     */
     [[nodiscard]] size_type mapped_length() const noexcept
     {
         return pimpl_ ? pimpl_->mapped_length() : 0;
     }
 
+    // -------------------------------------------------------------------------
+    // Data access
+    // -------------------------------------------------------------------------
+
     /**
-     * Returns a pointer to the first requested byte, or `nullptr` if no memory mapping
-     * exists. Non-const version only available for write access mode.
-     * Calling on an empty shared_mmap is undefined behaviour.
+     * Returns a pointer to the first byte of the mapped region.
+     *
+     * Non-const version requires write access mode.
+     * Asserts in debug mode if called on an empty shared_mmap.
+     *
+     * @return Pointer to mapped data.
      */
     [[nodiscard]] pointer data() noexcept {
         static_assert(AccessMode == access_mode::write, "non-const data() requires write access");
         assert(pimpl_ && "data() called on empty shared_mmap");
         return pimpl_->data();
     }
-    [[nodiscard]] const_pointer data() const noexcept { return pimpl_ ? pimpl_->data() : nullptr; }
 
     /**
-     * Returns an iterator to the first requested byte, if a valid memory mapping
-     * exists, otherwise this function call is undefined behaviour.
-     * Non-const version only available for write access mode.
+     * Returns a const pointer to the first byte of the mapped region.
+     *
+     * @return Const pointer to mapped data, or nullptr if not mapped.
+     */
+    [[nodiscard]] const_pointer data() const noexcept { return pimpl_ ? pimpl_->data() : nullptr; }
+
+    // -------------------------------------------------------------------------
+    // Iterator access
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns an iterator to the first byte.
+     *
+     * Non-const version requires write access mode.
+     * Undefined behavior if called on an empty shared_mmap.
+     *
+     * @return Iterator to the first byte.
      */
     [[nodiscard]] iterator begin() noexcept {
         static_assert(AccessMode == access_mode::write, "non-const begin() requires write access");
         assert(pimpl_ && "begin() called on empty shared_mmap");
         return pimpl_->begin();
     }
+
+    /** @copydoc begin() */
     [[nodiscard]] const_iterator begin() const noexcept {
         assert(pimpl_ && "begin() called on empty shared_mmap");
         return pimpl_->begin();
     }
+
+    /** @copydoc begin() */
     [[nodiscard]] const_iterator cbegin() const noexcept {
         assert(pimpl_ && "cbegin() called on empty shared_mmap");
         return pimpl_->cbegin();
     }
 
     /**
-     * Returns an iterator one past the last requested byte, if a valid memory mapping
-     * exists, otherwise this function call is undefined behaviour.
-     * Non-const version only available for write access mode.
+     * Returns an iterator one past the last byte.
+     *
+     * Non-const version requires write access mode.
+     * Undefined behavior if called on an empty shared_mmap.
+     *
+     * @return Iterator past the last byte.
      */
     [[nodiscard]] iterator end() noexcept {
         static_assert(AccessMode == access_mode::write, "non-const end() requires write access");
         assert(pimpl_ && "end() called on empty shared_mmap");
         return pimpl_->end();
     }
+
+    /** @copydoc end() */
     [[nodiscard]] const_iterator end() const noexcept {
         assert(pimpl_ && "end() called on empty shared_mmap");
         return pimpl_->end();
     }
+
+    /** @copydoc end() */
     [[nodiscard]] const_iterator cend() const noexcept {
         assert(pimpl_ && "cend() called on empty shared_mmap");
         return pimpl_->cend();
     }
 
     /**
-     * Returns a reverse iterator to the last memory mapped byte, if a valid
-     * memory mapping exists, otherwise this function call is undefined
-     * behaviour. Non-const version only available for write access mode.
+     * Returns a reverse iterator to the last byte.
+     *
+     * Non-const version requires write access mode.
+     *
+     * @return Reverse iterator to the last byte.
      */
     [[nodiscard]] reverse_iterator rbegin() noexcept {
         static_assert(AccessMode == access_mode::write, "non-const rbegin() requires write access");
         assert(pimpl_ && "rbegin() called on empty shared_mmap");
         return pimpl_->rbegin();
     }
+
+    /** @copydoc rbegin() */
     [[nodiscard]] const_reverse_iterator rbegin() const noexcept {
         assert(pimpl_ && "rbegin() called on empty shared_mmap");
         return pimpl_->rbegin();
     }
+
+    /** @copydoc rbegin() */
     [[nodiscard]] const_reverse_iterator crbegin() const noexcept {
         assert(pimpl_ && "crbegin() called on empty shared_mmap");
         return pimpl_->crbegin();
     }
 
     /**
-     * Returns a reverse iterator past the first mapped byte, if a valid memory
-     * mapping exists, otherwise this function call is undefined behaviour.
-     * Non-const version only available for write access mode.
+     * Returns a reverse iterator before the first byte.
+     *
+     * Non-const version requires write access mode.
+     *
+     * @return Reverse iterator before the first byte.
      */
     [[nodiscard]] reverse_iterator rend() noexcept {
         static_assert(AccessMode == access_mode::write, "non-const rend() requires write access");
         assert(pimpl_ && "rend() called on empty shared_mmap");
         return pimpl_->rend();
     }
+
+    /** @copydoc rend() */
     [[nodiscard]] const_reverse_iterator rend() const noexcept {
         assert(pimpl_ && "rend() called on empty shared_mmap");
         return pimpl_->rend();
     }
+
+    /** @copydoc rend() */
     [[nodiscard]] const_reverse_iterator crend() const noexcept {
         assert(pimpl_ && "crend() called on empty shared_mmap");
         return pimpl_->crend();
     }
 
+    // -------------------------------------------------------------------------
+    // Element access
+    // -------------------------------------------------------------------------
+
     /**
-     * Returns a reference to the `i`th byte from the first requested byte (as returned
-     * by `data`). If this is invoked when no valid memory mapping has been created
-     * prior to this call, undefined behaviour ensues.
-     * Non-const version only available for write access mode.
+     * Returns a reference to the byte at the given index.
+     *
+     * No bounds checking. Non-const version requires write access mode.
+     *
+     * @param i Index of the byte (0-based).
+     * @return Reference to the byte.
      */
     [[nodiscard]] reference operator[](const size_type i) noexcept {
         static_assert(AccessMode == access_mode::write, "non-const operator[] requires write access");
         assert(pimpl_ && "operator[] called on empty shared_mmap");
         return (*pimpl_)[i];
     }
+
+    /** @copydoc operator[]() */
     [[nodiscard]] const_reference operator[](const size_type i) const noexcept {
         assert(pimpl_ && "operator[] called on empty shared_mmap");
         return (*pimpl_)[i];
     }
 
+    // -------------------------------------------------------------------------
+    // C++20 std::span support
+    // -------------------------------------------------------------------------
+
 #if __cplusplus >= 202002L
-    /** Returns the mapped memory as a std::span. */
+    /**
+     * Returns the mapped memory as a read-only std::span.
+     *
+     * @return A span viewing the mapped region, or empty span if not mapped.
+     */
     [[nodiscard]] std::span<const value_type> as_span() const noexcept {
         return pimpl_ ? pimpl_->as_span() : std::span<const value_type>{};
     }
 
-    /** Returns the mapped memory as a mutable std::span (write mode only). */
+    /**
+     * Returns the mapped memory as a mutable std::span.
+     *
+     * Only available for write access mode.
+     *
+     * @return A mutable span viewing the mapped region.
+     */
     [[nodiscard]] std::span<value_type> as_span() noexcept {
         static_assert(AccessMode == access_mode::write, "mutable as_span() requires write access");
         assert(pimpl_ && "as_span() called on empty shared_mmap");
@@ -258,25 +528,26 @@ public:
     }
 #endif
 
+    // -------------------------------------------------------------------------
+    // Mapping operations
+    // -------------------------------------------------------------------------
+
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
-     * reason is reported via `error` and the object remains in a state as if this
-     * function hadn't been called.
+     * Establishes a memory mapping from a file path.
      *
-     * `path`, which must be a path to an existing file, is used to retrieve a file
-     * handle (which is closed when the object destructs or `unmap` is called), which is
-     * then used to memory map the requested region. Upon failure, `error` is set to
-     * indicate the reason and the object remains in an unmapped state.
+     * Creates or reuses the internal shared_ptr to hold the new mapping.
+     * If this shared_mmap already references a mapping, behavior depends
+     * on whether there are other owners:
+     * - If sole owner: reuses the same mmap object
+     * - If shared: creates a new mmap (other owners keep their reference)
      *
-     * `offset` is the number of bytes, relative to the start of the file, where the
-     * mapping should begin. When specifying it, there is no need to worry about
-     * providing a value that is aligned with the operating system's page allocation
-     * granularity. This is adjusted by the implementation such that the first requested
-     * byte (as returned by `data` or `begin`), so long as `offset` is valid, will be at
-     * `offset` from the start of the file.
+     * @param path   Path to an existing file.
+     * @param offset Byte offset where mapping starts.
+     * @param length Number of bytes to map, or `map_entire_file`.
+     * @param error  Output parameter for error reporting.
      *
-     * `length` is the number of bytes to map. It may be `map_entire_file`, in which
-     * case a mapping of the entire file is created.
+     * Note: The std::filesystem::path overload is used to avoid overload
+     * ambiguity on Windows where char* could match both path and HANDLE.
      */
     void map(const std::filesystem::path& path, const size_type offset,
         const size_type length, std::error_code& error)
@@ -285,16 +556,10 @@ public:
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
-     * reason is reported via `error` and the object remains in a state as if this
-     * function hadn't been called.
+     * Maps the entire file from a path.
      *
-     * `path`, which must be a path to an existing file, is used to retrieve a file
-     * handle (which is closed when the object destructs or `unmap` is called), which is
-     * then used to memory map the requested region. Upon failure, `error` is set to
-     * indicate the reason and the object remains in an unmapped state.
-     *
-     * The entire file is mapped.
+     * @param path  Path to an existing file.
+     * @param error Output parameter for error reporting.
      */
     void map(const std::filesystem::path& path, std::error_code& error)
     {
@@ -302,23 +567,15 @@ public:
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
-     * reason is reported via `error` and the object remains in a state as if this
-     * function hadn't been called.
+     * Establishes a memory mapping from an existing file handle.
      *
-     * `handle`, which must be a valid file handle, which is used to memory map the
-     * requested region. Upon failure, `error` is set to indicate the reason and the
-     * object remains in an unmapped state.
+     * The handle is NOT owned by this object; caller must keep it open
+     * while the mapping exists and close it afterward.
      *
-     * `offset` is the number of bytes, relative to the start of the file, where the
-     * mapping should begin. When specifying it, there is no need to worry about
-     * providing a value that is aligned with the operating system's page allocation
-     * granularity. This is adjusted by the implementation such that the first requested
-     * byte (as returned by `data` or `begin`), so long as `offset` is valid, will be at
-     * `offset` from the start of the file.
-     *
-     * `length` is the number of bytes to map. It may be `map_entire_file`, in which
-     * case a mapping of the entire file is created.
+     * @param handle Valid file handle (HANDLE on Windows, fd on POSIX).
+     * @param offset Byte offset where mapping starts.
+     * @param length Number of bytes to map, or `map_entire_file`.
+     * @param error  Output parameter for error reporting.
      */
     void map(const handle_type handle, const size_type offset,
         const size_type length, std::error_code& error)
@@ -327,15 +584,10 @@ public:
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
-     * reason is reported via `error` and the object remains in a state as if this
-     * function hadn't been called.
+     * Maps the entire file from a handle.
      *
-     * `handle`, which must be a valid file handle, which is used to memory map the
-     * requested region. Upon failure, `error` is set to indicate the reason and the
-     * object remains in an unmapped state.
-     *
-     * The entire file is mapped.
+     * @param handle Valid file handle.
+     * @param error  Output parameter for error reporting.
      */
     void map(const handle_type handle, std::error_code& error)
     {
@@ -343,29 +595,46 @@ public:
     }
 
     /**
-     * If a valid memory mapping has been created prior to this call, this call
-     * instructs the kernel to unmap the memory region and disassociate this object
-     * from the file.
+     * Releases this object's reference to the mapping.
      *
-     * The file handle associated with the file that is mapped is only closed if the
-     * mapping was created using a file path. If, on the other hand, an existing
-     * file handle was used to create the mapping, the file handle is not closed.
+     * If this is the sole owner, the underlying mmap is unmapped.
+     * Otherwise, other shared_mmaps continue to have access.
+     *
+     * After calling, is_open() returns false for this object.
      */
     void unmap() { if(pimpl_) pimpl_->unmap(); }
 
+    /**
+     * Swaps contents with another shared_mmap.
+     *
+     * Efficiently exchanges the shared_ptr (no mapping changes).
+     *
+     * @param other The shared_mmap to swap with.
+     */
     void swap(basic_shared_mmap& other) noexcept { pimpl_.swap(other.pimpl_); }
 
     /**
-     * Flushes the memory mapped page to disk. Errors are reported via `error`.
+     * Flushes modified pages to the underlying file.
+     *
      * Only available for write access mode.
+     *
+     * @param error Output parameter for error reporting.
      */
     void sync(std::error_code& error) {
         static_assert(AccessMode == access_mode::write, "sync() requires write access");
         if(pimpl_) pimpl_->sync(error);
     }
 
-    /** All operators compare the underlying `basic_mmap`'s addresses. */
+    // -------------------------------------------------------------------------
+    // Comparison operators
+    // -------------------------------------------------------------------------
 
+    /**
+     * Equality comparison.
+     *
+     * Two shared_mmaps are equal if they reference the same underlying mmap
+     * (same shared_ptr). This is identity comparison, not content comparison.
+     */
     [[nodiscard]] friend bool operator==(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ == b.pimpl_;
@@ -376,6 +645,12 @@ public:
         return !(a == b);
     }
 
+    /**
+     * Ordering comparisons.
+     *
+     * Compares the shared_ptr addresses, providing a consistent ordering
+     * for use in ordered containers.
+     */
     [[nodiscard]] friend bool operator<(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ < b.pimpl_;
@@ -397,55 +672,112 @@ public:
     }
 
 private:
+    // -------------------------------------------------------------------------
+    // Private implementation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Internal map implementation.
+     *
+     * If pimpl_ is null, creates a new mmap via make_mmap and wraps it.
+     * If pimpl_ exists, reuses it by calling map() on the existing mmap.
+     *
+     * @tparam MappingToken Path or handle type.
+     * @param token  File path or handle.
+     * @param offset Byte offset.
+     * @param length Number of bytes to map.
+     * @param error  Error output parameter.
+     */
     template<typename MappingToken>
     void map_impl(const MappingToken& token, const size_type offset,
         const size_type length, std::error_code& error)
     {
         if(!pimpl_)
         {
+            // No existing mapping - create a new one
             mmap_type mmap = make_mmap<mmap_type>(token, offset, length, error);
             if(error) { return; }
             pimpl_ = std::make_shared<mmap_type>(std::move(mmap));
         }
         else
         {
+            // Reuse existing mmap object (note: this may affect other owners
+            // if they exist, which is probably unintended - consider if pimpl_
+            // should be replaced instead when use_count() > 1)
             pimpl_->map(token, offset, length, error);
         }
     }
 };
 
+// -----------------------------------------------------------------------------
+// Type aliases for common use cases
+// -----------------------------------------------------------------------------
+
 /**
- * This is the basis for all read-only mmap objects and should be preferred over
- * directly using basic_shared_mmap.
+ * Read-only shared memory mapping template.
+ *
+ * @tparam ByteT The byte type (char, unsigned char, std::byte).
  */
 template<typename ByteT>
 using basic_shared_mmap_source = basic_shared_mmap<access_mode::read, ByteT>;
 
 /**
- * This is the basis for all read-write mmap objects and should be preferred over
- * directly using basic_shared_mmap.
+ * Read-write shared memory mapping template.
+ *
+ * @tparam ByteT The byte type (char, unsigned char, std::byte).
  */
 template<typename ByteT>
 using basic_shared_mmap_sink = basic_shared_mmap<access_mode::write, ByteT>;
 
-/**
- * These aliases cover the most common use cases, both representing a raw byte stream
- * (either with a char or an unsigned char/uint8_t).
- */
+// Convenient type aliases for common byte types:
+
+/// Shared read-only mapping with char bytes (most common)
 using shared_mmap_source = basic_shared_mmap_source<char>;
+
+/// Shared read-only mapping with unsigned char bytes
 using shared_ummap_source = basic_shared_mmap_source<unsigned char>;
+
+/// Shared read-only mapping with std::byte bytes (C++17)
 using shared_bmmap_source = basic_shared_mmap_source<std::byte>;
 
+/// Shared read-write mapping with char bytes (most common)
 using shared_mmap_sink = basic_shared_mmap_sink<char>;
+
+/// Shared read-write mapping with unsigned char bytes
 using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
+
+/// Shared read-write mapping with std::byte bytes (C++17)
 using shared_bmmap_sink = basic_shared_mmap_sink<std::byte>;
 
+// -----------------------------------------------------------------------------
+// Factory functions
+// -----------------------------------------------------------------------------
+
 /**
- * Convenience factory method.
+ * Creates a shared read-only memory mapping.
  *
- * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
- * `std::filesystem::path`, `std::vector<char>`, or similar), or a
- * `shared_mmap_source::handle_type`.
+ * This is the recommended way to create shared_mmap_source objects.
+ * Factory functions are used instead of throwing constructors to avoid
+ * overload ambiguity on Windows (char* -> void* implicit conversion).
+ *
+ * @tparam MappingToken Type that can identify a file:
+ *         - std::filesystem::path, std::string, const char*
+ *         - shared_mmap_source::handle_type (file descriptor or HANDLE)
+ *
+ * @param token  The file path or handle to map.
+ * @param offset Byte offset where mapping starts.
+ * @param length Number of bytes to map, or `map_entire_file`.
+ * @param error  Output parameter set on failure, cleared on success.
+ *
+ * @return The created shared_mmap_source.
+ *
+ * Example:
+ *   std::error_code ec;
+ *   auto file = mio::make_shared_mmap_source("data.bin", 0, 1024, ec);
+ *   if (!ec) {
+ *       auto copy = file;  // Both share the same mapping
+ *       for (char c : copy) { process(c); }
+ *   }
  */
 template<typename MappingToken>
 shared_mmap_source make_shared_mmap_source(const MappingToken& token,
@@ -455,6 +787,15 @@ shared_mmap_source make_shared_mmap_source(const MappingToken& token,
     return make_mmap<shared_mmap_source>(token, offset, length, error);
 }
 
+/**
+ * Creates a shared read-only mapping of an entire file.
+ *
+ * Convenience overload that maps from offset 0 to end of file.
+ *
+ * @param token The file path or handle to map.
+ * @param error Output parameter for error reporting.
+ * @return The created shared_mmap_source.
+ */
 template<typename MappingToken>
 shared_mmap_source make_shared_mmap_source(const MappingToken& token, std::error_code& error)
 {
@@ -462,11 +803,26 @@ shared_mmap_source make_shared_mmap_source(const MappingToken& token, std::error
 }
 
 /**
- * Convenience factory method.
+ * Creates a shared read-write memory mapping.
  *
- * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
- * `std::filesystem::path`, `std::vector<char>`, or similar), or a
- * `shared_mmap_sink::handle_type`.
+ * This is the recommended way to create shared_mmap_sink objects.
+ *
+ * @tparam MappingToken Type that can identify a file (path or handle).
+ *
+ * @param token  The file path or handle to map.
+ * @param offset Byte offset where mapping starts.
+ * @param length Number of bytes to map, or `map_entire_file`.
+ * @param error  Output parameter for error reporting.
+ *
+ * @return The created shared_mmap_sink.
+ *
+ * Example:
+ *   std::error_code ec;
+ *   auto file = mio::make_shared_mmap_sink("output.bin", ec);
+ *   if (!ec) {
+ *       std::fill(file.begin(), file.end(), 0);
+ *       file.sync(ec);
+ *   }
  */
 template<typename MappingToken>
 shared_mmap_sink make_shared_mmap_sink(const MappingToken& token,
@@ -476,6 +832,15 @@ shared_mmap_sink make_shared_mmap_sink(const MappingToken& token,
     return make_mmap<shared_mmap_sink>(token, offset, length, error);
 }
 
+/**
+ * Creates a shared read-write mapping of an entire file.
+ *
+ * Convenience overload that maps from offset 0 to end of file.
+ *
+ * @param token The file path or handle to map.
+ * @param error Output parameter for error reporting.
+ * @return The created shared_mmap_sink.
+ */
 template<typename MappingToken>
 shared_mmap_sink make_shared_mmap_sink(const MappingToken& token, std::error_code& error)
 {
