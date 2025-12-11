@@ -144,8 +144,29 @@ int main()
         // Make sure shared_mmap mapping compiles as all testing was done on
         // normal mmaps.
         TRACE("creating shared_mmap_source with make_mmap (error code version)");
+        TRACE("path = '" << path << "'");
+        // First verify the file still exists and is readable
+        {
+            std::ifstream check(path);
+            TRACE("file check: good=" << check.good() << " is_open=" << check.is_open());
+        }
+        // Try with basic_mmap first
+        TRACE("testing basic_mmap_source first");
+        mio::mmap_source test_basic;
+        test_basic.map(path, error);
+        TRACE("basic_mmap result: error=" << error.value() << " msg=" << error.message());
+        if (!error) {
+            TRACE("basic_mmap_source worked, size=" << test_basic.size());
+            test_basic.unmap();
+        }
+        error.clear();
+
+        TRACE("now trying shared_mmap_source");
         auto _3 = mio::make_mmap<mio::shared_mmap_source>(path, 0, mio::map_entire_file, error);
-        if (error) { return handle_error(error); }
+        if (error) {
+            TRACE("shared_mmap_source failed: " << error.value() << " - " << error.message());
+            return handle_error(error);
+        }
         TRACE("shared_mmap_source created successfully, is_open=" << _3.is_open());
         TRACE("make_mmap_source");
         auto _4 = mio::make_mmap_source(path, error);
