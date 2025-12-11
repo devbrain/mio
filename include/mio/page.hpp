@@ -46,7 +46,7 @@ enum class access_mode
  * to determine the page size, caches the value, and returns it. Any subsequent call to
  * this function serves the cached value, so no further syscalls are made.
  */
-inline size_t page_size()
+[[nodiscard]] inline size_t page_size()
 {
     static const size_t page_size = []
     {
@@ -62,11 +62,11 @@ inline size_t page_size()
 }
 
 /**
- * Alligns `offset` to the operating's system page size such that it subtracts the
+ * Aligns `offset` to the operating system's page size such that it subtracts the
  * difference until the nearest page boundary before `offset`, or does nothing if
  * `offset` is already page aligned.
  */
-inline size_t make_offset_page_aligned(size_t offset) noexcept
+[[nodiscard]] inline size_t make_offset_page_aligned(size_t offset) noexcept
 {
     const size_t page_size_ = page_size();
     // Use integer division to round down to the nearest page alignment.

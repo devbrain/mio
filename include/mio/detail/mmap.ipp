@@ -26,6 +26,7 @@
 #include "mio/detail/string_util.hpp"
 
 #include <algorithm>
+#include <filesystem>
 
 #ifndef _WIN32
 # include <unistd.h>
@@ -52,40 +53,10 @@ inline DWORD int64_low(int64_t n) noexcept
     return n & 0xffffffff;
 }
 
-inline
-std::wstring s_2_ws(const std::string& s)
+// Open file using std::filesystem::path (handles UTF-8 conversion automatically)
+inline file_handle_type open_file_helper(const std::filesystem::path& path, const access_mode mode)
 {
-    if (s.empty())
-        return{};
-    const auto s_length = static_cast<int>(s.length());
-    auto buf = std::vector<wchar_t>(s_length);
-    const auto wide_char_count = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s_length, buf.data(), s_length);
-    return std::wstring(buf.data(), wide_char_count);
-}
-
-template<
-    typename String,
-    typename = typename std::enable_if<
-        std::is_same<typename char_type<String>::type, char>::value
-    >::type
-> file_handle_type open_file_helper(const String& path, const access_mode mode)
-{
-    return ::CreateFileW(s_2_ws(path).c_str(),
-            mode == access_mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            0,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            0);
-}
-
-template<typename String>
-typename std::enable_if<
-    std::is_same<typename char_type<String>::type, wchar_t>::value,
-    file_handle_type
->::type open_file_helper(const String& path, const access_mode mode)
-{
-    return ::CreateFileW(c_str(path),
+    return ::CreateFileW(path.c_str(),
             mode == access_mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             0,
@@ -112,12 +83,11 @@ inline std::error_code last_error() noexcept
     return error;
 }
 
-template<typename String>
-file_handle_type open_file(const String& path, const access_mode mode,
+inline file_handle_type open_file(const std::filesystem::path& path, const access_mode mode,
         std::error_code& error)
 {
     error.clear();
-    if(detail::empty(path))
+    if(path.empty())
     {
         error = std::make_error_code(std::errc::invalid_argument);
         return invalid_handle;
@@ -125,7 +95,7 @@ file_handle_type open_file(const String& path, const access_mode mode,
 #ifdef _WIN32
     const auto handle = win::open_file_helper(path, mode);
 #else // POSIX
-    const auto handle = ::open(c_str(path),
+    const auto handle = ::open(path.c_str(),
             mode == access_mode::read ? O_RDONLY : O_RDWR);
 #endif
     if(handle == invalid_handle)
@@ -145,7 +115,7 @@ inline size_t query_file_size(file_handle_type handle, std::error_code& error)
         error = detail::last_error();
         return 0;
     }
-	return static_cast<int64_t>(file_size.QuadPart);
+	return static_cast<size_t>(file_size.QuadPart);
 #else // POSIX
     struct stat sbuf;
     if(::fstat(handle, &sbuf) == -1)
@@ -203,7 +173,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
     char* mapping_start = static_cast<char*>(::mmap(
             0, // Don't give hint as to where to map.
             length_to_map,
-            mode == access_mode::read ? PROT_READ : PROT_WRITE,
+            mode == access_mode::read ? PROT_READ : PROT_READ | PROT_WRITE,
             MAP_SHARED,
             file_handle,
             aligned_offset));
@@ -296,12 +266,11 @@ basic_mmap<AccessMode, ByteT>::mapping_handle() const noexcept
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<typename String>
-void basic_mmap<AccessMode, ByteT>::map(const String& path, const size_type offset,
+void basic_mmap<AccessMode, ByteT>::map(const std::filesystem::path& path, const size_type offset,
         const size_type length, std::error_code& error)
 {
     error.clear();
-    if(detail::empty(path))
+    if(path.empty())
     {
         error = std::make_error_code(std::errc::invalid_argument);
         return;
@@ -366,10 +335,10 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle,
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::write, void>::type
-basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
+void basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
 {
+    static_assert(AccessMode == access_mode::write, "sync() requires write access");
+
     error.clear();
     if(!is_open())
     {
@@ -390,12 +359,6 @@ basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
             return;
         }
     }
-#ifdef _WIN32
-    if(::FlushFileBuffers(file_handle_) == 0)
-    {
-        error = detail::last_error();
-    }
-#endif
 }
 
 template<access_mode AccessMode, typename ByteT>
@@ -446,7 +409,7 @@ bool basic_mmap<AccessMode, ByteT>::is_mapped() const noexcept
 }
 
 template<access_mode AccessMode, typename ByteT>
-void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other)
+void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other) noexcept
 {
     if(this != &other)
     {
@@ -463,22 +426,15 @@ void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other)
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::write, void>::type
-basic_mmap<AccessMode, ByteT>::conditional_sync()
+void basic_mmap<AccessMode, ByteT>::conditional_sync()
 {
-    // This is invoked from the destructor, so not much we can do about
-    // failures here.
-    std::error_code ec;
-    sync(ec);
-}
-
-template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::read, void>::type
-basic_mmap<AccessMode, ByteT>::conditional_sync()
-{
-    // noop
+    if constexpr (AccessMode == access_mode::write) {
+        // This is invoked from the destructor, so not much we can do about
+        // failures here.
+        std::error_code ec;
+        sync(ec);
+    }
+    // For read mode: noop
 }
 
 template<access_mode AccessMode, typename ByteT>

@@ -8,6 +8,7 @@
 #include <cassert>
 #include <system_error>
 #include <numeric>
+#include <filesystem>
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -15,11 +16,12 @@
 #include <fcntl.h>
 #endif
 
-// Just make sure this compiles.
-#ifdef CXX17
-# include <cstddef>
-using mmap_source = mio::basic_mmap_source<std::byte>;
-#endif
+// std::byte is now always available (C++17 required)
+using byte_mmap_source = mio::basic_mmap_source<std::byte>;
+
+// Test std::byte type aliases
+static_assert(std::is_same_v<mio::bmmap_source::value_type, std::byte>);
+static_assert(std::is_same_v<mio::bmmap_sink::value_type, std::byte>);
 
 template<class MMap>
 void test_at_offset(const MMap& file_view, const std::string& buffer,
@@ -111,15 +113,26 @@ int main()
         mio::shared_mmap_source _3(path, 0, mio::map_entire_file);
         auto _4 = mio::make_mmap_source(path, error);
         auto _5 = mio::make_mmap<mio::shared_mmap_source>(path, 0, mio::map_entire_file, error);
+
+        // Test std::filesystem::path support (C++17)
+        std::filesystem::path fs_path(path);
+        mio::mmap_source fs_mmap;
+        fs_mmap.map(fs_path, error);
+        assert(!error);
+        assert(fs_mmap.is_open());
+        fs_mmap.unmap();
+
+        // Test std::byte aliases
+        mio::bmmap_source byte_source;
+        mio::shared_bmmap_source shared_byte_source;
+
 #ifdef _WIN32
-        const wchar_t* wpath1 = L"dasfsf";
-        auto _6 = mio::make_mmap_source(wpath1, error);
-        mio::mmap_source _7;
-        _7.map(wpath1, error);
-        const std::wstring wpath2 = wpath1;
-        auto _8 = mio::make_mmap_source(wpath2, error);
-        mio::mmap_source _9;
-        _9.map(wpath1, error);
+        const wchar_t* wpath1 = L"test-file";
+        std::filesystem::path wfs_path(wpath1);
+        mio::mmap_source wpath_mmap;
+        wpath_mmap.map(wfs_path, error);
+        // Don't assert on error - file may not exist with this name
+        error.clear();
 #else
         const int fd = open(path, O_RDONLY);
         mio::mmap_source _fdmmap(fd, 0, mio::map_entire_file);
@@ -127,6 +140,18 @@ int main()
         _fdmmap.map(fd, error);
 #endif
     }
+
+#if __cplusplus >= 202002L
+    // Test std::span support (C++20)
+    {
+        mio::mmap_source span_test = mio::make_mmap_source(path, error);
+        if (!error) {
+            auto span = span_test.as_span();
+            assert(span.size() == span_test.size());
+        }
+        error.clear();
+    }
+#endif
 
     std::printf("all tests passed!\n");
 }

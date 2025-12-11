@@ -70,7 +70,7 @@ enum class access_mode
  * to determine the page size, caches the value, and returns it. Any subsequent call to
  * this function serves the cached value, so no further syscalls are made.
  */
-inline size_t page_size()
+[[nodiscard]] inline size_t page_size()
 {
     static const size_t page_size = []
     {
@@ -86,11 +86,11 @@ inline size_t page_size()
 }
 
 /**
- * Alligns `offset` to the operating's system page size such that it subtracts the
+ * Aligns `offset` to the operating system's page size such that it subtracts the
  * difference until the nearest page boundary before `offset`, or does nothing if
  * `offset` is already page aligned.
  */
-inline size_t make_offset_page_aligned(size_t offset) noexcept
+[[nodiscard]] inline size_t make_offset_page_aligned(size_t offset) noexcept
 {
     const size_t page_size_ = page_size();
     // Use integer division to round down to the nearest page alignment.
@@ -106,6 +106,12 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept
 #include <string>
 #include <system_error>
 #include <cstdint>
+#include <cstddef>
+#include <filesystem>
+
+#if __cplusplus >= 202002L
+#include <span>
+#endif
 
 #ifdef _WIN32
 # ifndef WIN32_LEAN_AND_MEAN
@@ -118,9 +124,9 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept
 
 namespace mio {
 
-// This value may be provided as the `length` parameter to the constructor or
-// `map`, in which case a memory mapping of the entire file is created.
-enum { map_entire_file = 0 };
+/// This value may be provided as the `length` parameter to the constructor or
+/// `map`, in which case a memory mapping of the entire file is created.
+inline constexpr size_t map_entire_file = 0;
 
 #ifdef _WIN32
 using file_handle_type = HANDLE;
@@ -128,9 +134,9 @@ using file_handle_type = HANDLE;
 using file_handle_type = int;
 #endif
 
-// This value represents an invalid file handle type. This can be used to
-// determine whether `basic_mmap::file_handle` is valid, for example.
-const static file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+/// This value represents an invalid file handle type. This can be used to
+/// determine whether `basic_mmap::file_handle` is valid, for example.
+inline constexpr file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
 
 template<access_mode AccessMode, typename ByteT>
 struct basic_mmap
@@ -161,7 +167,7 @@ private:
     size_type mapped_length_ = 0;
 
     // Letting user map a file using both an existing file handle and a path
-    // introcudes some complexity (see `is_handle_internal_`).
+    // introduces some complexity (see `is_handle_internal_`).
     // On POSIX, we only need a file handle to create a mapping, while on
     // Windows systems the file handle is necessary to retrieve a file mapping
     // handle, but any subsequent operations on the mapped region must be done
@@ -172,7 +178,7 @@ private:
 #endif
 
     // Letting user map a file using both an existing file handle and a path
-    // introcudes some complexity in that we must not close the file handle if
+    // introduces some complexity in that we must not close the file handle if
     // user provided it, but we must close it if we obtained it using the
     // provided path. For this reason, this flag is used to determine when to
     // close `file_handle_`.
@@ -192,8 +198,7 @@ public:
      * while establishing the mapping is wrapped in a `std::system_error` and is
      * thrown.
      */
-    template<typename String>
-    basic_mmap(const String& path, const size_type offset = 0, const size_type length = map_entire_file)
+    basic_mmap(const std::filesystem::path& path, const size_type offset = 0, const size_type length = map_entire_file)
     {
         std::error_code error;
         map(path, offset, length, error);
@@ -233,21 +238,21 @@ public:
      * however, a mapped region of a file gets its own handle, which is returned by
      * 'mapping_handle'.
      */
-    handle_type file_handle() const noexcept { return file_handle_; }
-    handle_type mapping_handle() const noexcept;
+    [[nodiscard]] handle_type file_handle() const noexcept { return file_handle_; }
+    [[nodiscard]] handle_type mapping_handle() const noexcept;
 
     /** Returns whether a valid memory mapping has been created. */
-    bool is_open() const noexcept { return file_handle_ != invalid_handle; }
+    [[nodiscard]] bool is_open() const noexcept { return file_handle_ != invalid_handle; }
 
     /**
      * Returns true if no mapping was established, that is, conceptually the
      * same as though the length that was mapped was 0. This function is
      * provided so that this class has Container semantics.
      */
-    bool empty() const noexcept { return length() == 0; }
+    [[nodiscard]] bool empty() const noexcept { return length() == 0; }
 
     /** Returns true if a mapping was established. */
-    bool is_mapped() const noexcept;
+    [[nodiscard]] bool is_mapped() const noexcept;
 
     /**
      * `size` and `length` both return the logical length, i.e. the number of bytes
@@ -255,85 +260,105 @@ public:
      * bytes that were mapped which is a multiple of the underlying operating system's
      * page allocation granularity.
      */
-    size_type size() const noexcept { return length(); }
-    size_type length() const noexcept { return length_; }
-    size_type mapped_length() const noexcept { return mapped_length_; }
+    [[nodiscard]] size_type size() const noexcept { return length(); }
+    [[nodiscard]] size_type length() const noexcept { return length_; }
+    [[nodiscard]] size_type mapped_length() const noexcept { return mapped_length_; }
 
     /** Returns the offset relative to the start of the mapping. */
-    size_type mapping_offset() const noexcept
+    [[nodiscard]] size_type mapping_offset() const noexcept
     {
         return mapped_length_ - length_;
     }
 
     /**
      * Returns a pointer to the first requested byte, or `nullptr` if no memory mapping
-     * exists.
+     * exists. Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > pointer data() noexcept { return data_; }
-    const_pointer data() const noexcept { return data_; }
+    [[nodiscard]] pointer data() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const data() requires write access");
+        return data_;
+    }
+    [[nodiscard]] const_pointer data() const noexcept { return data_; }
 
     /**
      * Returns an iterator to the first requested byte, if a valid memory mapping
      * exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > iterator begin() noexcept { return data(); }
-    const_iterator begin() const noexcept { return data(); }
-    const_iterator cbegin() const noexcept { return data(); }
+    [[nodiscard]] iterator begin() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const begin() requires write access");
+        return data();
+    }
+    [[nodiscard]] const_iterator begin() const noexcept { return data(); }
+    [[nodiscard]] const_iterator cbegin() const noexcept { return data(); }
 
     /**
      * Returns an iterator one past the last requested byte, if a valid memory mapping
      * exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > iterator end() noexcept { return data() + length(); }
-    const_iterator end() const noexcept { return data() + length(); }
-    const_iterator cend() const noexcept { return data() + length(); }
+    [[nodiscard]] iterator end() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const end() requires write access");
+        return data() + length();
+    }
+    [[nodiscard]] const_iterator end() const noexcept { return data() + length(); }
+    [[nodiscard]] const_iterator cend() const noexcept { return data() + length(); }
 
     /**
      * Returns a reverse iterator to the last memory mapped byte, if a valid
      * memory mapping exists, otherwise this function call is undefined
-     * behaviour.
+     * behaviour. Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
-    const_reverse_iterator rbegin() const noexcept
+    [[nodiscard]] reverse_iterator rbegin() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const rbegin() requires write access");
+        return reverse_iterator(end());
+    }
+    [[nodiscard]] const_reverse_iterator rbegin() const noexcept
     { return const_reverse_iterator(end()); }
-    const_reverse_iterator crbegin() const noexcept
+    [[nodiscard]] const_reverse_iterator crbegin() const noexcept
     { return const_reverse_iterator(end()); }
 
     /**
      * Returns a reverse iterator past the first mapped byte, if a valid memory
      * mapping exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
-    const_reverse_iterator rend() const noexcept
+    [[nodiscard]] reverse_iterator rend() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const rend() requires write access");
+        return reverse_iterator(begin());
+    }
+    [[nodiscard]] const_reverse_iterator rend() const noexcept
     { return const_reverse_iterator(begin()); }
-    const_reverse_iterator crend() const noexcept
+    [[nodiscard]] const_reverse_iterator crend() const noexcept
     { return const_reverse_iterator(begin()); }
 
     /**
      * Returns a reference to the `i`th byte from the first requested byte (as returned
      * by `data`). If this is invoked when no valid memory mapping has been created
      * prior to this call, undefined behaviour ensues.
+     * Non-const version only available for write access mode.
      */
-    reference operator[](const size_type i) noexcept { return data_[i]; }
-    const_reference operator[](const size_type i) const noexcept { return data_[i]; }
+    [[nodiscard]] reference operator[](const size_type i) noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const operator[] requires write access");
+        return data_[i];
+    }
+    [[nodiscard]] const_reference operator[](const size_type i) const noexcept { return data_[i]; }
+
+#if __cplusplus >= 202002L
+    /** Returns the mapped memory as a read-only std::span. */
+    [[nodiscard]] std::span<const value_type> as_span() const noexcept {
+        return {data(), length()};
+    }
+
+    /** Returns the mapped memory as a mutable std::span (write mode only). */
+    template<access_mode A = AccessMode, std::enable_if_t<A == access_mode::write, int> = 0>
+    [[nodiscard]] std::span<value_type> as_span() noexcept {
+        return {data(), length()};
+    }
+#endif
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -352,12 +377,25 @@ public:
      * `length` is the number of bytes to map. It may be `map_entire_file`, in which
      * case a mapping of the entire file is created.
      */
-    template<typename String>
-    void map(const String& path, const size_type offset,
+    void map(const std::filesystem::path& path, const size_type offset,
             const size_type length, std::error_code& error);
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Overload for const char* to handle null pointers safely.
+     * Constructing std::filesystem::path from nullptr is UB, so we check first.
+     */
+    void map(const char* path, const size_type offset,
+            const size_type length, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map(std::filesystem::path(path), offset, length, error);
+    }
+
+    /**
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -365,18 +403,29 @@ public:
      * handle (which is closed when the object destructs or `unmap` is called), which is
      * then used to memory map the requested region. Upon failure, `error` is set to
      * indicate the reason and the object remains in an unmapped state.
-     * 
+     *
      * The entire file is mapped.
      */
-    template<typename String>
-    void map(const String& path, std::error_code& error)
+    void map(const std::filesystem::path& path, std::error_code& error)
     {
         map(path, 0, map_entire_file, error);
     }
 
     /**
+     * Overload for const char* to handle null pointers safely.
+     */
+    void map(const char* path, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map(std::filesystem::path(path), 0, map_entire_file, error);
+    }
+
+    /**
      * Establishes a memory mapping with AccessMode. If the mapping is
-     * unsuccesful, the reason is reported via `error` and the object remains in
+     * unsuccessful, the reason is reported via `error` and the object remains in
      * a state as if this function hadn't been called.
      *
      * `handle`, which must be a valid file handle, which is used to memory map the
@@ -398,13 +447,13 @@ public:
 
     /**
      * Establishes a memory mapping with AccessMode. If the mapping is
-     * unsuccesful, the reason is reported via `error` and the object remains in
+     * unsuccessful, the reason is reported via `error` and the object remains in
      * a state as if this function hadn't been called.
      *
      * `handle`, which must be a valid file handle, which is used to memory map the
      * requested region. Upon failure, `error` is set to indicate the reason and the
      * object remains in an unmapped state.
-     * 
+     *
      * The entire file is mapped.
      */
     void map(const handle_type handle, std::error_code& error)
@@ -423,66 +472,57 @@ public:
      */
     void unmap();
 
-    void swap(basic_mmap& other);
-
-    /** Flushes the memory mapped page to disk. Errors are reported via `error`. */
-    template<access_mode A = AccessMode>
-    typename std::enable_if<A == access_mode::write, void>::type
-    sync(std::error_code& error);
+    void swap(basic_mmap& other) noexcept;
 
     /**
-     * All operators compare the address of the first byte and size of the two mapped
-     * regions.
+     * Flushes the memory mapped page to disk. Errors are reported via `error`.
+     * Only available for write access mode.
      */
+    void sync(std::error_code& error);
 
 private:
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > pointer get_mapping_start() noexcept
+    // Returns the actual start of the mapping (before any offset adjustment).
+    // Used internally by unmap() and sync() for both read and write modes.
+    // Accesses data_ directly to avoid triggering access mode checks.
+    [[nodiscard]] pointer get_mapping_start() noexcept
     {
-        return !data() ? nullptr : data() - mapping_offset();
+        return !data_ ? nullptr : data_ - mapping_offset();
     }
 
-    const_pointer get_mapping_start() const noexcept
+    [[nodiscard]] const_pointer get_mapping_start() const noexcept
     {
-        return !data() ? nullptr : data() - mapping_offset();
+        return !data_ ? nullptr : data_ - mapping_offset();
     }
 
     /**
      * The destructor syncs changes to disk if `AccessMode` is `write`, but not
-     * if it's `read`, but since the destructor cannot be templated, we need to
-     * do SFINAE in a dedicated function, where one syncs and the other is a noop.
+     * if it's `read`. Uses if constexpr to select behavior at compile time.
      */
-    template<access_mode A = AccessMode>
-    typename std::enable_if<A == access_mode::write, void>::type
-    conditional_sync();
-    template<access_mode A = AccessMode>
-    typename std::enable_if<A == access_mode::read, void>::type conditional_sync();
+    void conditional_sync();
 };
 
 template<access_mode AccessMode, typename ByteT>
-bool operator==(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator==(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 template<access_mode AccessMode, typename ByteT>
-bool operator!=(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator!=(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 template<access_mode AccessMode, typename ByteT>
-bool operator<(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator<(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 template<access_mode AccessMode, typename ByteT>
-bool operator<=(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator<=(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 template<access_mode AccessMode, typename ByteT>
-bool operator>(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator>(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 template<access_mode AccessMode, typename ByteT>
-bool operator>=(const basic_mmap<AccessMode, ByteT>& a,
+[[nodiscard]] bool operator>=(const basic_mmap<AccessMode, ByteT>& a,
         const basic_mmap<AccessMode, ByteT>& b);
 
 /**
@@ -505,9 +545,11 @@ using basic_mmap_sink = basic_mmap<access_mode::write, ByteT>;
  */
 using mmap_source = basic_mmap_source<char>;
 using ummap_source = basic_mmap_source<unsigned char>;
+using bmmap_source = basic_mmap_source<std::byte>;
 
 using mmap_sink = basic_mmap_sink<char>;
 using ummap_sink = basic_mmap_sink<unsigned char>;
+using bmmap_sink = basic_mmap_sink<std::byte>;
 
 /**
  * Convenience factory method that constructs a mapping for any `basic_mmap` or
@@ -618,148 +660,46 @@ mmap_sink make_mmap_sink(const MappingToken& token, std::error_code& error)
 #ifndef MIO_STRING_UTIL_HEADER
 #define MIO_STRING_UTIL_HEADER
 
-#include <type_traits>
+#include <string_view>
+#include <filesystem>
 
 namespace mio {
 namespace detail {
 
-template<
-    typename S,
-    typename C = typename std::decay<S>::type,
-    typename = decltype(std::declval<C>().data()),
-    typename = typename std::enable_if<
-        std::is_same<typename C::value_type, char>::value
-#ifdef _WIN32
-        || std::is_same<typename C::value_type, wchar_t>::value
-#endif
-    >::type
-> struct char_type_helper {
-    using type = typename C::value_type;
-};
+// std::string_view overloads (handles std::string, const char*, string literals)
+[[nodiscard]] inline const char* c_str(std::string_view sv) noexcept
+{
+    return sv.data();
+}
 
-template<class T>
-struct char_type {
-    using type = typename char_type_helper<T>::type;
-};
+[[nodiscard]] inline bool empty(std::string_view sv) noexcept
+{
+    return sv.empty();
+}
 
-// TODO: can we avoid this brute force approach?
-template<>
-struct char_type<char*> {
-    using type = char;
-};
+// std::filesystem::path overloads
+[[nodiscard]] inline auto c_str(const std::filesystem::path& p)
+{
+    return p.c_str();
+}
 
-template<>
-struct char_type<const char*> {
-    using type = char;
-};
-
-template<size_t N>
-struct char_type<char[N]> {
-    using type = char;
-};
-
-template<size_t N>
-struct char_type<const char[N]> {
-    using type = char;
-};
+[[nodiscard]] inline bool empty(const std::filesystem::path& p)
+{
+    return p.empty();
+}
 
 #ifdef _WIN32
-template<>
-struct char_type<wchar_t*> {
-    using type = wchar_t;
-};
+// Windows wide string support
+[[nodiscard]] inline const wchar_t* c_str(std::wstring_view sv) noexcept
+{
+    return sv.data();
+}
 
-template<>
-struct char_type<const wchar_t*> {
-    using type = wchar_t;
-};
-
-template<size_t N>
-struct char_type<wchar_t[N]> {
-    using type = wchar_t;
-};
-
-template<size_t N>
-struct char_type<const wchar_t[N]> {
-    using type = wchar_t;
-};
+[[nodiscard]] inline bool empty(std::wstring_view sv) noexcept
+{
+    return sv.empty();
+}
 #endif // _WIN32
-
-template<typename CharT, typename S>
-struct is_c_str_helper
-{
-    static constexpr bool value = std::is_same<
-        CharT*,
-        // TODO: I'm so sorry for this... Can this be made cleaner?
-        typename std::add_pointer<
-            typename std::remove_cv<
-                typename std::remove_pointer<
-                    typename std::decay<
-                        S
-                    >::type
-                >::type
-            >::type
-        >::type
-    >::value;
-};
-
-template<typename S>
-struct is_c_str
-{
-    static constexpr bool value = is_c_str_helper<char, S>::value;
-};
-
-#ifdef _WIN32
-template<typename S>
-struct is_c_wstr
-{
-    static constexpr bool value = is_c_str_helper<wchar_t, S>::value;
-};
-#endif // _WIN32
-
-template<typename S>
-struct is_c_str_or_c_wstr
-{
-    static constexpr bool value = is_c_str<S>::value
-#ifdef _WIN32
-        || is_c_wstr<S>::value
-#endif
-        ;
-};
-
-template<
-    typename String,
-    typename = decltype(std::declval<String>().data()),
-    typename = typename std::enable_if<!is_c_str_or_c_wstr<String>::value>::type
-> const typename char_type<String>::type* c_str(const String& path)
-{
-    return path.data();
-}
-
-template<
-    typename String,
-    typename = decltype(std::declval<String>().empty()),
-    typename = typename std::enable_if<!is_c_str_or_c_wstr<String>::value>::type
-> bool empty(const String& path)
-{
-    return path.empty();
-}
-
-template<
-    typename String,
-    typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type
-> const typename char_type<String>::type* c_str(String path)
-{
-    return path;
-}
-
-template<
-    typename String,
-    typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type
-> bool empty(String path)
-{
-    return !path || (*path == 0);
-}
 
 } // namespace detail
 } // namespace mio
@@ -768,6 +708,7 @@ template<
 
 
 #include <algorithm>
+#include <filesystem>
 
 #ifndef _WIN32
 # include <unistd.h>
@@ -794,39 +735,10 @@ inline DWORD int64_low(int64_t n) noexcept
     return n & 0xffffffff;
 }
 
-std::wstring s_2_ws(const std::string& s)
+// Open file using std::filesystem::path (handles UTF-8 conversion automatically)
+inline file_handle_type open_file_helper(const std::filesystem::path& path, const access_mode mode)
 {
-    if (s.empty())
-        return{};
-    const auto s_length = static_cast<int>(s.length());
-    auto buf = std::vector<wchar_t>(s_length);
-    const auto wide_char_count = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), s_length, buf.data(), s_length);
-    return std::wstring(buf.data(), wide_char_count);
-}
-
-template<
-    typename String,
-    typename = typename std::enable_if<
-        std::is_same<typename char_type<String>::type, char>::value
-    >::type
-> file_handle_type open_file_helper(const String& path, const access_mode mode)
-{
-    return ::CreateFileW(s_2_ws(path).c_str(),
-            mode == access_mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            0,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            0);
-}
-
-template<typename String>
-typename std::enable_if<
-    std::is_same<typename char_type<String>::type, wchar_t>::value,
-    file_handle_type
->::type open_file_helper(const String& path, const access_mode mode)
-{
-    return ::CreateFileW(c_str(path),
+    return ::CreateFileW(path.c_str(),
             mode == access_mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             0,
@@ -853,12 +765,11 @@ inline std::error_code last_error() noexcept
     return error;
 }
 
-template<typename String>
-file_handle_type open_file(const String& path, const access_mode mode,
+inline file_handle_type open_file(const std::filesystem::path& path, const access_mode mode,
         std::error_code& error)
 {
     error.clear();
-    if(detail::empty(path))
+    if(path.empty())
     {
         error = std::make_error_code(std::errc::invalid_argument);
         return invalid_handle;
@@ -866,7 +777,7 @@ file_handle_type open_file(const String& path, const access_mode mode,
 #ifdef _WIN32
     const auto handle = win::open_file_helper(path, mode);
 #else // POSIX
-    const auto handle = ::open(c_str(path),
+    const auto handle = ::open(path.c_str(),
             mode == access_mode::read ? O_RDONLY : O_RDWR);
 #endif
     if(handle == invalid_handle)
@@ -886,7 +797,7 @@ inline size_t query_file_size(file_handle_type handle, std::error_code& error)
         error = detail::last_error();
         return 0;
     }
-	return static_cast<int64_t>(file_size.QuadPart);
+	return static_cast<size_t>(file_size.QuadPart);
 #else // POSIX
     struct stat sbuf;
     if(::fstat(handle, &sbuf) == -1)
@@ -944,7 +855,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
     char* mapping_start = static_cast<char*>(::mmap(
             0, // Don't give hint as to where to map.
             length_to_map,
-            mode == access_mode::read ? PROT_READ : PROT_WRITE,
+            mode == access_mode::read ? PROT_READ : PROT_READ | PROT_WRITE,
             MAP_SHARED,
             file_handle,
             aligned_offset));
@@ -1037,12 +948,11 @@ basic_mmap<AccessMode, ByteT>::mapping_handle() const noexcept
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<typename String>
-void basic_mmap<AccessMode, ByteT>::map(const String& path, const size_type offset,
+void basic_mmap<AccessMode, ByteT>::map(const std::filesystem::path& path, const size_type offset,
         const size_type length, std::error_code& error)
 {
     error.clear();
-    if(detail::empty(path))
+    if(path.empty())
     {
         error = std::make_error_code(std::errc::invalid_argument);
         return;
@@ -1107,10 +1017,10 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle,
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::write, void>::type
-basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
+void basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
 {
+    static_assert(AccessMode == access_mode::write, "sync() requires write access");
+
     error.clear();
     if(!is_open())
     {
@@ -1131,12 +1041,6 @@ basic_mmap<AccessMode, ByteT>::sync(std::error_code& error)
             return;
         }
     }
-#ifdef _WIN32
-    if(::FlushFileBuffers(file_handle_) == 0)
-    {
-        error = detail::last_error();
-    }
-#endif
 }
 
 template<access_mode AccessMode, typename ByteT>
@@ -1187,7 +1091,7 @@ bool basic_mmap<AccessMode, ByteT>::is_mapped() const noexcept
 }
 
 template<access_mode AccessMode, typename ByteT>
-void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other)
+void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other) noexcept
 {
     if(this != &other)
     {
@@ -1204,22 +1108,15 @@ void basic_mmap<AccessMode, ByteT>::swap(basic_mmap& other)
 }
 
 template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::write, void>::type
-basic_mmap<AccessMode, ByteT>::conditional_sync()
+void basic_mmap<AccessMode, ByteT>::conditional_sync()
 {
-    // This is invoked from the destructor, so not much we can do about
-    // failures here.
-    std::error_code ec;
-    sync(ec);
-}
-
-template<access_mode AccessMode, typename ByteT>
-template<access_mode A>
-typename std::enable_if<A == access_mode::read, void>::type
-basic_mmap<AccessMode, ByteT>::conditional_sync()
-{
-    // noop
+    if constexpr (AccessMode == access_mode::write) {
+        // This is invoked from the destructor, so not much we can do about
+        // failures here.
+        std::error_code ec;
+        sync(ec);
+    }
+    // For read mode: noop
 }
 
 template<access_mode AccessMode, typename ByteT>
@@ -1293,97 +1190,20 @@ bool operator>=(const basic_mmap<AccessMode, ByteT>& a,
  * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef MIO_PAGE_HEADER
-#define MIO_PAGE_HEADER
-
-#ifdef _WIN32
-# include <windows.h>
-#else
-# include <unistd.h>
-#endif
-
-namespace mio {
-
-/**
- * This is used by `basic_mmap` to determine whether to create a read-only or
- * a read-write memory mapping.
- */
-enum class access_mode
-{
-    read,
-    write
-};
-
-/**
- * Determines the operating system's page allocation granularity.
- *
- * On the first call to this function, it invokes the operating system specific syscall
- * to determine the page size, caches the value, and returns it. Any subsequent call to
- * this function serves the cached value, so no further syscalls are made.
- */
-inline size_t page_size()
-{
-    static const size_t page_size = []
-    {
-#ifdef _WIN32
-        SYSTEM_INFO SystemInfo;
-        GetSystemInfo(&SystemInfo);
-        return SystemInfo.dwAllocationGranularity;
-#else
-        return sysconf(_SC_PAGE_SIZE);
-#endif
-    }();
-    return page_size;
-}
-
-/**
- * Alligns `offset` to the operating's system page size such that it subtracts the
- * difference until the nearest page boundary before `offset`, or does nothing if
- * `offset` is already page aligned.
- */
-inline size_t make_offset_page_aligned(size_t offset) noexcept
-{
-    const size_t page_size_ = page_size();
-    // Use integer division to round down to the nearest page alignment.
-    return offset / page_size_ * page_size_;
-}
-
-} // namespace mio
-
-#endif // MIO_PAGE_HEADER
-/* Copyright 2017 https://github.com/mandreyel
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this
- * software and associated documentation files (the "Software"), to deal in the Software
- * without restriction, including without limitation the rights to use, copy, modify,
- * merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to the following
- * conditions:
- *
- * The above copyright notice and this permission notice shall be included in all copies
- * or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
- * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
- * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
-
 #ifndef MIO_SHARED_MMAP_HEADER
 #define MIO_SHARED_MMAP_HEADER
 
 // #include "mio/mmap.hpp"
 
 
+#include <cassert>
 #include <system_error> // std::error_code
 #include <memory> // std::shared_ptr
 
 namespace mio {
 
 /**
- * Exposes (nearly) the same interface as `basic_mmap`, but endowes it with
+ * Exposes (nearly) the same interface as `basic_mmap`, but endows it with
  * `std::shared_ptr` semantics.
  *
  * This is not the default behaviour of `basic_mmap` to avoid allocating on the heap if
@@ -1447,8 +1267,7 @@ public:
      * while establishing the mapping is wrapped in a `std::system_error` and is
      * thrown.
      */
-    template<typename String>
-    basic_shared_mmap(const String& path, const size_type offset = 0, const size_type length = map_entire_file)
+    basic_shared_mmap(const std::filesystem::path& path, const size_type offset = 0, const size_type length = map_entire_file)
     {
         std::error_code error;
         map(path, offset, length, error);
@@ -1476,32 +1295,35 @@ public:
     ~basic_shared_mmap() = default;
 
     /** Returns the underlying `std::shared_ptr` instance that holds the mmap. */
-    std::shared_ptr<mmap_type> get_shared_ptr() { return pimpl_; }
+    [[nodiscard]] std::shared_ptr<mmap_type> get_shared_ptr() { return pimpl_; }
 
     /**
      * On UNIX systems 'file_handle' and 'mapping_handle' are the same. On Windows,
      * however, a mapped region of a file gets its own handle, which is returned by
      * 'mapping_handle'.
      */
-    handle_type file_handle() const noexcept
+    [[nodiscard]] handle_type file_handle() const noexcept
     {
         return pimpl_ ? pimpl_->file_handle() : invalid_handle;
     }
 
-    handle_type mapping_handle() const noexcept
+    [[nodiscard]] handle_type mapping_handle() const noexcept
     {
         return pimpl_ ? pimpl_->mapping_handle() : invalid_handle;
     }
 
     /** Returns whether a valid memory mapping has been created. */
-    bool is_open() const noexcept { return pimpl_ && pimpl_->is_open(); }
+    [[nodiscard]] bool is_open() const noexcept { return pimpl_ && pimpl_->is_open(); }
+
+    /** Returns true if a mapping was established. */
+    [[nodiscard]] bool is_mapped() const noexcept { return pimpl_ && pimpl_->is_mapped(); }
 
     /**
      * Returns true if no mapping was established, that is, conceptually the
      * same as though the length that was mapped was 0. This function is
      * provided so that this class has Container semantics.
      */
-    bool empty() const noexcept { return !pimpl_ || pimpl_->empty(); }
+    [[nodiscard]] bool empty() const noexcept { return !pimpl_ || pimpl_->empty(); }
 
     /**
      * `size` and `length` both return the logical length, i.e. the number of bytes
@@ -1509,75 +1331,133 @@ public:
      * bytes that were mapped which is a multiple of the underlying operating system's
      * page allocation granularity.
      */
-    size_type size() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
-    size_type length() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
-    size_type mapped_length() const noexcept
+    [[nodiscard]] size_type size() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
+    [[nodiscard]] size_type length() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
+    [[nodiscard]] size_type mapped_length() const noexcept
     {
         return pimpl_ ? pimpl_->mapped_length() : 0;
     }
 
     /**
      * Returns a pointer to the first requested byte, or `nullptr` if no memory mapping
-     * exists.
+     * exists. Non-const version only available for write access mode.
+     * Calling on an empty shared_mmap is undefined behaviour.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > pointer data() noexcept { return pimpl_->data(); }
-    const_pointer data() const noexcept { return pimpl_ ? pimpl_->data() : nullptr; }
+    [[nodiscard]] pointer data() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const data() requires write access");
+        assert(pimpl_ && "data() called on empty shared_mmap");
+        return pimpl_->data();
+    }
+    [[nodiscard]] const_pointer data() const noexcept { return pimpl_ ? pimpl_->data() : nullptr; }
 
     /**
      * Returns an iterator to the first requested byte, if a valid memory mapping
      * exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    iterator begin() noexcept { return pimpl_->begin(); }
-    const_iterator begin() const noexcept { return pimpl_->begin(); }
-    const_iterator cbegin() const noexcept { return pimpl_->cbegin(); }
+    [[nodiscard]] iterator begin() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const begin() requires write access");
+        assert(pimpl_ && "begin() called on empty shared_mmap");
+        return pimpl_->begin();
+    }
+    [[nodiscard]] const_iterator begin() const noexcept {
+        assert(pimpl_ && "begin() called on empty shared_mmap");
+        return pimpl_->begin();
+    }
+    [[nodiscard]] const_iterator cbegin() const noexcept {
+        assert(pimpl_ && "cbegin() called on empty shared_mmap");
+        return pimpl_->cbegin();
+    }
 
     /**
      * Returns an iterator one past the last requested byte, if a valid memory mapping
      * exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > iterator end() noexcept { return pimpl_->end(); }
-    const_iterator end() const noexcept { return pimpl_->end(); }
-    const_iterator cend() const noexcept { return pimpl_->cend(); }
+    [[nodiscard]] iterator end() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const end() requires write access");
+        assert(pimpl_ && "end() called on empty shared_mmap");
+        return pimpl_->end();
+    }
+    [[nodiscard]] const_iterator end() const noexcept {
+        assert(pimpl_ && "end() called on empty shared_mmap");
+        return pimpl_->end();
+    }
+    [[nodiscard]] const_iterator cend() const noexcept {
+        assert(pimpl_ && "cend() called on empty shared_mmap");
+        return pimpl_->cend();
+    }
 
     /**
      * Returns a reverse iterator to the last memory mapped byte, if a valid
      * memory mapping exists, otherwise this function call is undefined
-     * behaviour.
+     * behaviour. Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > reverse_iterator rbegin() noexcept { return pimpl_->rbegin(); }
-    const_reverse_iterator rbegin() const noexcept { return pimpl_->rbegin(); }
-    const_reverse_iterator crbegin() const noexcept { return pimpl_->crbegin(); }
+    [[nodiscard]] reverse_iterator rbegin() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const rbegin() requires write access");
+        assert(pimpl_ && "rbegin() called on empty shared_mmap");
+        return pimpl_->rbegin();
+    }
+    [[nodiscard]] const_reverse_iterator rbegin() const noexcept {
+        assert(pimpl_ && "rbegin() called on empty shared_mmap");
+        return pimpl_->rbegin();
+    }
+    [[nodiscard]] const_reverse_iterator crbegin() const noexcept {
+        assert(pimpl_ && "crbegin() called on empty shared_mmap");
+        return pimpl_->crbegin();
+    }
 
     /**
      * Returns a reverse iterator past the first mapped byte, if a valid memory
      * mapping exists, otherwise this function call is undefined behaviour.
+     * Non-const version only available for write access mode.
      */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > reverse_iterator rend() noexcept { return pimpl_->rend(); }
-    const_reverse_iterator rend() const noexcept { return pimpl_->rend(); }
-    const_reverse_iterator crend() const noexcept { return pimpl_->crend(); }
+    [[nodiscard]] reverse_iterator rend() noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const rend() requires write access");
+        assert(pimpl_ && "rend() called on empty shared_mmap");
+        return pimpl_->rend();
+    }
+    [[nodiscard]] const_reverse_iterator rend() const noexcept {
+        assert(pimpl_ && "rend() called on empty shared_mmap");
+        return pimpl_->rend();
+    }
+    [[nodiscard]] const_reverse_iterator crend() const noexcept {
+        assert(pimpl_ && "crend() called on empty shared_mmap");
+        return pimpl_->crend();
+    }
 
     /**
      * Returns a reference to the `i`th byte from the first requested byte (as returned
      * by `data`). If this is invoked when no valid memory mapping has been created
      * prior to this call, undefined behaviour ensues.
+     * Non-const version only available for write access mode.
      */
-    reference operator[](const size_type i) noexcept { return (*pimpl_)[i]; }
-    const_reference operator[](const size_type i) const noexcept { return (*pimpl_)[i]; }
+    [[nodiscard]] reference operator[](const size_type i) noexcept {
+        static_assert(AccessMode == access_mode::write, "non-const operator[] requires write access");
+        assert(pimpl_ && "operator[] called on empty shared_mmap");
+        return (*pimpl_)[i];
+    }
+    [[nodiscard]] const_reference operator[](const size_type i) const noexcept {
+        assert(pimpl_ && "operator[] called on empty shared_mmap");
+        return (*pimpl_)[i];
+    }
+
+#if __cplusplus >= 202002L
+    /** Returns the mapped memory as a std::span. */
+    [[nodiscard]] std::span<const value_type> as_span() const noexcept {
+        return pimpl_ ? pimpl_->as_span() : std::span<const value_type>{};
+    }
+
+    /** Returns the mapped memory as a mutable std::span (write mode only). */
+    [[nodiscard]] std::span<value_type> as_span() noexcept {
+        static_assert(AccessMode == access_mode::write, "mutable as_span() requires write access");
+        assert(pimpl_ && "as_span() called on empty shared_mmap");
+        return pimpl_->as_span();
+    }
+#endif
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -1596,15 +1476,14 @@ public:
      * `length` is the number of bytes to map. It may be `map_entire_file`, in which
      * case a mapping of the entire file is created.
      */
-    template<typename String>
-    void map(const String& path, const size_type offset,
+    void map(const std::filesystem::path& path, const size_type offset,
         const size_type length, std::error_code& error)
     {
         map_impl(path, offset, length, error);
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -1615,14 +1494,13 @@ public:
      *
      * The entire file is mapped.
      */
-    template<typename String>
-    void map(const String& path, std::error_code& error)
+    void map(const std::filesystem::path& path, std::error_code& error)
     {
         map_impl(path, 0, map_entire_file, error);
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -1647,7 +1525,7 @@ public:
     }
 
     /**
-     * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
+     * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
      *
@@ -1673,42 +1551,45 @@ public:
      */
     void unmap() { if(pimpl_) pimpl_->unmap(); }
 
-    void swap(basic_shared_mmap& other) { pimpl_.swap(other.pimpl_); }
+    void swap(basic_shared_mmap& other) noexcept { pimpl_.swap(other.pimpl_); }
 
-    /** Flushes the memory mapped page to disk. Errors are reported via `error`. */
-    template<
-        access_mode A = AccessMode,
-        typename = typename std::enable_if<A == access_mode::write>::type
-    > void sync(std::error_code& error) { if(pimpl_) pimpl_->sync(error); }
+    /**
+     * Flushes the memory mapped page to disk. Errors are reported via `error`.
+     * Only available for write access mode.
+     */
+    void sync(std::error_code& error) {
+        static_assert(AccessMode == access_mode::write, "sync() requires write access");
+        if(pimpl_) pimpl_->sync(error);
+    }
 
     /** All operators compare the underlying `basic_mmap`'s addresses. */
 
-    friend bool operator==(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator==(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ == b.pimpl_;
     }
 
-    friend bool operator!=(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator!=(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return !(a == b);
     }
 
-    friend bool operator<(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator<(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ < b.pimpl_;
     }
 
-    friend bool operator<=(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator<=(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ <= b.pimpl_;
     }
 
-    friend bool operator>(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator>(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ > b.pimpl_;
     }
 
-    friend bool operator>=(const basic_shared_mmap& a, const basic_shared_mmap& b)
+    [[nodiscard]] friend bool operator>=(const basic_shared_mmap& a, const basic_shared_mmap& b) noexcept
     {
         return a.pimpl_ >= b.pimpl_;
     }
@@ -1751,9 +1632,11 @@ using basic_shared_mmap_sink = basic_shared_mmap<access_mode::write, ByteT>;
  */
 using shared_mmap_source = basic_shared_mmap_source<char>;
 using shared_ummap_source = basic_shared_mmap_source<unsigned char>;
+using shared_bmmap_source = basic_shared_mmap_source<std::byte>;
 
 using shared_mmap_sink = basic_shared_mmap_sink<char>;
 using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
+using shared_bmmap_sink = basic_shared_mmap_sink<std::byte>;
 
 } // namespace mio
 
