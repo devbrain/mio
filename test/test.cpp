@@ -110,9 +110,10 @@ int main()
         mio::shared_ummap_source _2;
         // Make sure shared_mmap mapping compiles as all testing was done on
         // normal mmaps.
-        mio::shared_mmap_source _3(path, 0, mio::map_entire_file);
+        auto _3 = mio::make_shared_mmap_source(path, 0, mio::map_entire_file, error);
+        assert(!error);
         auto _4 = mio::make_mmap_source(path, error);
-        auto _5 = mio::make_mmap<mio::shared_mmap_source>(path, 0, mio::map_entire_file, error);
+        auto _5 = mio::make_shared_mmap_source(path, error);
 
         // Test std::filesystem::path support (C++17)
         std::filesystem::path fs_path(path);

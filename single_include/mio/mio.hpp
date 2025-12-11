@@ -1266,45 +1266,6 @@ public:
         return *this;
     }
 
-#ifdef __cpp_exceptions
-    /**
-     * The same as invoking the `map` function, except any error that may occur
-     * while establishing the mapping is wrapped in a `std::system_error` and is
-     * thrown.
-     */
-    basic_shared_mmap(const std::filesystem::path& path, const size_type offset = 0, const size_type length = map_entire_file)
-    {
-        std::error_code error;
-        map(path, offset, length, error);
-        if(error) { throw std::system_error(error); }
-    }
-
-    /**
-     * Overload for const char* to prevent implicit conversion to handle_type (void* on Windows).
-     */
-    basic_shared_mmap(const char* path, const size_type offset = 0, const size_type length = map_entire_file)
-    {
-        std::error_code error;
-        if (!path) {
-            error = std::make_error_code(std::errc::invalid_argument);
-        } else {
-            map(std::filesystem::path(path), offset, length, error);
-        }
-        if(error) { throw std::system_error(error); }
-    }
-
-    /**
-     * The same as invoking the `map` function, except any error that may occur
-     * while establishing the mapping is wrapped in a `std::system_error` and is
-     * thrown.
-     */
-    basic_shared_mmap(const handle_type handle, const size_type offset = 0, const size_type length = map_entire_file)
-    {
-        std::error_code error;
-        map(handle, offset, length, error);
-        if(error) { throw std::system_error(error); }
-    }
-#endif // __cpp_exceptions
 
     /**
      * If this is a read-write mapping and the last reference to the mapping,
@@ -1682,6 +1643,48 @@ using shared_bmmap_source = basic_shared_mmap_source<std::byte>;
 using shared_mmap_sink = basic_shared_mmap_sink<char>;
 using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
 using shared_bmmap_sink = basic_shared_mmap_sink<std::byte>;
+
+/**
+ * Convenience factory method.
+ *
+ * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
+ * `std::filesystem::path`, `std::vector<char>`, or similar), or a
+ * `shared_mmap_source::handle_type`.
+ */
+template<typename MappingToken>
+shared_mmap_source make_shared_mmap_source(const MappingToken& token,
+        shared_mmap_source::size_type offset,
+        shared_mmap_source::size_type length, std::error_code& error)
+{
+    return make_mmap<shared_mmap_source>(token, offset, length, error);
+}
+
+template<typename MappingToken>
+shared_mmap_source make_shared_mmap_source(const MappingToken& token, std::error_code& error)
+{
+    return make_shared_mmap_source(token, 0, map_entire_file, error);
+}
+
+/**
+ * Convenience factory method.
+ *
+ * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
+ * `std::filesystem::path`, `std::vector<char>`, or similar), or a
+ * `shared_mmap_sink::handle_type`.
+ */
+template<typename MappingToken>
+shared_mmap_sink make_shared_mmap_sink(const MappingToken& token,
+        shared_mmap_sink::size_type offset,
+        shared_mmap_sink::size_type length, std::error_code& error)
+{
+    return make_mmap<shared_mmap_sink>(token, offset, length, error);
+}
+
+template<typename MappingToken>
+shared_mmap_sink make_shared_mmap_sink(const MappingToken& token, std::error_code& error)
+{
+    return make_shared_mmap_sink(token, 0, map_entire_file, error);
+}
 
 } // namespace mio
 
