@@ -63,9 +63,8 @@ jobs:
       - name: Setup Clang (Linux)
         if: matrix.compiler == 'clang' && runner.os == 'Linux'
         run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh ${{ matrix.version }}
+          sudo apt-get update
+          sudo apt-get install -y clang-${{ matrix.version }}
           echo "CXX=clang++-${{ matrix.version }}" >> $GITHUB_ENV
           echo "CC=clang-${{ matrix.version }}" >> $GITHUB_ENV
 
