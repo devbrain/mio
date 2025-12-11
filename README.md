@@ -168,15 +168,21 @@ When multiple owners need access to the same mapping:
 ```cpp
 #include <mio/shared_mmap.hpp>
 
-// Create a shared mapping
-mio::shared_mmap_source shared1("path/to/file");
+std::error_code ec;
+
+// Create a shared mapping using factory function
+auto shared1 = mio::make_shared_mmap_source("path/to/file", ec);
+if (ec) { /* handle error */ }
+
+// With offset and length
+auto shared2 = mio::make_shared_mmap_source("path/to/file", offset, length, ec);
 
 // Copy (both share the same underlying mapping)
-mio::shared_mmap_source shared2 = shared1;
+mio::shared_mmap_source shared3 = shared1;
 
 // Move from a regular mmap
 mio::mmap_source mmap("path/to/file");
-mio::shared_mmap_source shared3(std::move(mmap));
+mio::shared_mmap_source shared4(std::move(mmap));
 ```
 
 ### Using std::byte (C++17)
@@ -365,6 +371,36 @@ using shared_mmap_sink = basic_shared_mmap_sink<char>;
 // ... and unsigned char / std::byte variants
 ```
 
+### Factory Functions
+
+```cpp
+// Create mmap from path, handle, or file descriptor
+template<typename MappingToken>
+mmap_source make_mmap_source(const MappingToken& token, size_type offset,
+                              size_type length, std::error_code& error);
+template<typename MappingToken>
+mmap_source make_mmap_source(const MappingToken& token, std::error_code& error);
+
+template<typename MappingToken>
+mmap_sink make_mmap_sink(const MappingToken& token, size_type offset,
+                          size_type length, std::error_code& error);
+template<typename MappingToken>
+mmap_sink make_mmap_sink(const MappingToken& token, std::error_code& error);
+
+// Create shared_mmap (no throwing constructors available)
+template<typename MappingToken>
+shared_mmap_source make_shared_mmap_source(const MappingToken& token, size_type offset,
+                                            size_type length, std::error_code& error);
+template<typename MappingToken>
+shared_mmap_source make_shared_mmap_source(const MappingToken& token, std::error_code& error);
+
+template<typename MappingToken>
+shared_mmap_sink make_shared_mmap_sink(const MappingToken& token, size_type offset,
+                                        size_type length, std::error_code& error);
+template<typename MappingToken>
+shared_mmap_sink make_shared_mmap_sink(const MappingToken& token, std::error_code& error);
+```
+
 ### Constants
 
 ```cpp
@@ -386,7 +422,7 @@ mio provides two error handling mechanisms:
 
 ### Exception-based (Constructors)
 
-Constructors throw `std::system_error` on failure:
+Constructors for `mmap_source` and `mmap_sink` throw `std::system_error` on failure:
 
 ```cpp
 try {
@@ -395,6 +431,14 @@ try {
     std::cerr << "Mapping failed: " << e.what() << "\n";
     std::cerr << "Error code: " << e.code().value() << "\n";
 }
+```
+
+Note: `shared_mmap_source` and `shared_mmap_sink` do not have throwing constructors. Use factory functions instead:
+
+```cpp
+std::error_code ec;
+auto shared = mio::make_shared_mmap_source("file.txt", ec);
+if (ec) { /* handle error */ }
 ```
 
 ### Error code-based (Factory functions and map())
@@ -563,3 +607,4 @@ Changes from the original:
 - Replaced Python amalgamation script with pure CMake solution
 - Modernized CMake build system
 - Added GitHub Actions CI for Linux, macOS, and Windows
+- Changed `shared_mmap` API to use factory functions (avoids constructor overload ambiguity on Windows)
