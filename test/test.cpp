@@ -143,11 +143,13 @@ int main()
         mio::shared_ummap_source _2;
         // Make sure shared_mmap mapping compiles as all testing was done on
         // normal mmaps.
-        TRACE("creating shared_mmap_source with path");
-        mio::shared_mmap_source _3(path, 0, mio::map_entire_file);
+        TRACE("creating shared_mmap_source with make_mmap (error code version)");
+        auto _3 = mio::make_mmap<mio::shared_mmap_source>(path, 0, mio::map_entire_file, error);
+        if (error) { return handle_error(error); }
+        TRACE("shared_mmap_source created successfully, is_open=" << _3.is_open());
         TRACE("make_mmap_source");
         auto _4 = mio::make_mmap_source(path, error);
-        TRACE("make_mmap<shared_mmap_source>");
+        TRACE("make_mmap<shared_mmap_source> again");
         auto _5 = mio::make_mmap<mio::shared_mmap_source>(path, 0, mio::map_entire_file, error);
 
         // Test std::filesystem::path support (C++17)
