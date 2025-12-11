@@ -327,6 +327,32 @@ public:
     }
 
     /**
+     * Overload for const char* to handle null pointers safely and prevent
+     * implicit conversion to handle_type (void* on Windows).
+     */
+    void map(const char* path, const size_type offset,
+        const size_type length, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map_impl(std::filesystem::path(path), offset, length, error);
+    }
+
+    /**
+     * Overload for const char* to handle null pointers safely.
+     */
+    void map(const char* path, std::error_code& error)
+    {
+        if (!path) {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return;
+        }
+        map_impl(std::filesystem::path(path), 0, map_entire_file, error);
+    }
+
+    /**
      * Establishes a memory mapping with AccessMode. If the mapping is unsuccessful, the
      * reason is reported via `error` and the object remains in a state as if this
      * function hadn't been called.
