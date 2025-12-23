@@ -147,7 +147,7 @@ int main()
     {
         mio::mmap_source span_test = mio::make_mmap_source(path, error);
         if (!error) {
-            auto span = span_test.as_span();
+            [[maybe_unused]] auto span = span_test.as_span();
             assert(span.size() == span_test.size());
         }
         error.clear();
@@ -192,7 +192,7 @@ void test_at_offset(const MMap& file_view, const std::string& buffer,
             buf_idx < buffer.size() && view_idx < file_view.size();
             ++buf_idx, ++view_idx) {
         if(file_view[view_idx] != buffer[buf_idx]) {
-            std::printf("%luth byte mismatch: expected(%d) <> actual(%d)",
+            std::printf("%zuth byte mismatch: expected(%d) <> actual(%d)",
                     buf_idx, buffer[buf_idx], file_view[view_idx]);
             std::cout << std::flush;
             assert(0);

@@ -57,7 +57,7 @@ CMAKE_DEPENDENT_OPTION(MIO_INSTALL
 # Compiler warnings (internal use only, not exported to consumers)
 #
 add_library(mio_warnings INTERFACE)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(mio_warnings INTERFACE
         -Wall
         -Wextra
@@ -65,6 +65,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wshadow
         -Wconversion
         -Wsign-conversion)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(mio_warnings INTERFACE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wconversion
+        -Wsign-conversion
+        -Wno-c++98-compat
+        -Wno-c++98-compat-pedantic)
 elseif(MSVC)
     target_compile_options(mio_warnings INTERFACE
         /W4
