@@ -74,7 +74,10 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         -Wconversion
         -Wsign-conversion
         -Wno-c++98-compat
-        -Wno-c++98-compat-pedantic)
+        -Wno-c++98-compat-pedantic
+        -Wno-unsafe-buffer-usage
+        -Wno-zero-as-null-pointer-constant
+        -Wno-nonportable-system-include-path)
 elseif(MSVC)
     target_compile_options(mio_warnings INTERFACE
         /W4

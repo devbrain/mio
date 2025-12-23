@@ -90,7 +90,7 @@ int main()
         CHECK_INVALID_MMAP(m);
 
         // Empty path?
-        m = mio::make_mmap_source(static_cast<const char*>(0), 0, 0, error);
+        m = mio::make_mmap_source(static_cast<const char*>(nullptr), 0, 0, error);
         CHECK_INVALID_MMAP(m);
         m = mio::make_mmap_source(std::string(), 0, 0, error);
         CHECK_INVALID_MMAP(m);

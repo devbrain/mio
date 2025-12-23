@@ -77,7 +77,7 @@ namespace win {
  */
 inline DWORD int64_high(int64_t n) noexcept
 {
-    return n >> 32;
+    return static_cast<DWORD>(static_cast<uint64_t>(n) >> 32);
 }
 
 /**
@@ -137,7 +137,7 @@ inline std::error_code last_error() noexcept
 {
     std::error_code error;
 #ifdef _WIN32
-    error.assign(GetLastError(), std::system_category());
+    error.assign(static_cast<int>(GetLastError()), std::system_category());
 #else
     error.assign(errno, std::system_category());
 #endif
@@ -284,12 +284,13 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
     }
 
     // Step 2: Map a view of the file into memory
+    // Cast length_to_map to SIZE_T (MapViewOfFile expects SIZE_T for size parameter).
     char* mapping_start = static_cast<char*>(::MapViewOfFile(
             file_mapping_handle,
             mode == access_mode::read ? FILE_MAP_READ : FILE_MAP_WRITE,
             win::int64_high(aligned_offset),  // Upper 32 bits of offset
             win::int64_low(aligned_offset),   // Lower 32 bits of offset
-            length_to_map));
+            static_cast<SIZE_T>(length_to_map)));
 
     if(mapping_start == nullptr)
     {
