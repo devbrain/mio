@@ -210,7 +210,8 @@ inline size_t query_file_size(file_handle_type handle, std::error_code& error)
         error = detail::last_error();
         return 0;
     }
-    return sbuf.st_size;
+    // st_size is off_t (signed); cast to size_t (safe after successful fstat).
+    return static_cast<size_t>(sbuf.st_size);
 #endif
 }
 
@@ -255,7 +256,9 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
     const int64_t length, const access_mode mode, std::error_code& error)
 {
     // Round down offset to page boundary for OS mapping requirement
-    const int64_t aligned_offset = make_offset_page_aligned(offset);
+    // Cast offset to size_t for make_offset_page_aligned (offset is non-negative for valid mappings).
+    const int64_t aligned_offset = static_cast<int64_t>(
+        make_offset_page_aligned(static_cast<size_t>(offset)));
 
     // Actual length to map includes bytes from aligned_offset to offset
     const int64_t length_to_map = offset - aligned_offset + length;
@@ -297,9 +300,10 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
     }
 #else // POSIX
     // POSIX mmap is simpler - maps file directly to memory
+    // Cast length_to_map to size_t (mmap expects size_t for length parameter).
     char* mapping_start = static_cast<char*>(::mmap(
             0,  // Let OS choose mapping address (no hint)
-            length_to_map,
+            static_cast<size_t>(length_to_map),
             mode == access_mode::read ? PROT_READ : PROT_READ | PROT_WRITE,
             MAP_SHARED,      // Changes are shared with other processes
             file_handle,
@@ -500,8 +504,10 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle,
 
     // Create the memory mapping
     // If length==map_entire_file (0), map from offset to end of file
-    const auto ctx = detail::memory_map(handle, offset,
-            length == map_entire_file ? (file_size - offset) : length,
+    // Cast size_type to int64_t for memory_map (values are non-negative, safe conversion).
+    const auto ctx = detail::memory_map(handle,
+            static_cast<int64_t>(offset),
+            static_cast<int64_t>(length == map_entire_file ? (file_size - offset) : length),
             AccessMode, error);
 
     if(!error)
@@ -515,8 +521,9 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle,
         file_handle_ = handle;
         is_handle_internal_ = false;  // Caller owns the handle
         data_ = reinterpret_cast<pointer>(ctx.data);
-        length_ = ctx.length;
-        mapped_length_ = ctx.mapped_length;
+        // Cast int64_t to size_type (safe: values are from successful mapping, always non-negative).
+        length_ = static_cast<size_type>(ctx.length);
+        mapped_length_ = static_cast<size_type>(ctx.mapped_length);
 #ifdef _WIN32
         file_mapping_handle_ = ctx.file_mapping_handle;
 #endif

@@ -42,7 +42,7 @@ int main()
 
     const auto page_size = mio::page_size();
     // Fill buffer, then write it to file.
-    const int file_size = 4 * page_size - 250; // 16134, if page size is 4KiB
+    const size_t file_size = 4 * page_size - 250; // 16134, if page size is 4KiB
     std::string buffer(file_size, 0);
     // Start at first printable ASCII character.
     char v = 33;
@@ -169,7 +169,7 @@ void test_at_offset(const std::string& buffer, const char* path,
     if(error) { return; }
 
     assert(file_view.is_open());
-    const size_t mapped_size = buffer.size() - offset;
+    [[maybe_unused]] const size_t mapped_size = buffer.size() - offset;
     assert(file_view.size() == mapped_size);
 
     test_at_offset(file_view, buffer, offset);

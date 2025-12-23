@@ -920,7 +920,8 @@ template<
     typename MMap,
     typename MappingToken
 > MMap make_mmap(const MappingToken& token,
-        int64_t offset, int64_t length, std::error_code& error)
+        typename MMap::size_type offset, typename MMap::size_type length,
+        std::error_code& error)
 {
     MMap mmap;
     mmap.map(token, offset, length, error);

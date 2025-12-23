@@ -54,6 +54,24 @@ CMAKE_DEPENDENT_OPTION(MIO_INSTALL
     ON "NOT MIO_SUBPROJECT" OFF)
 
 #
+# Compiler warnings (internal use only, not exported to consumers)
+#
+add_library(mio_warnings INTERFACE)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(mio_warnings INTERFACE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wconversion
+        -Wsign-conversion)
+elseif(MSVC)
+    target_compile_options(mio_warnings INTERFACE
+        /W4
+        /permissive-)
+endif()
+
+#
 # mio library target (header-only)
 #
 add_library(mio INTERFACE)

@@ -101,7 +101,8 @@ enum class access_mode
         return SystemInfo.dwAllocationGranularity;
 #else
         // On POSIX systems, page size is typically 4KB but can vary.
-        return sysconf(_SC_PAGE_SIZE);
+        // sysconf returns long; cast to size_t (always positive for _SC_PAGE_SIZE).
+        return static_cast<size_t>(sysconf(_SC_PAGE_SIZE));
 #endif
     }();
     return page_size;

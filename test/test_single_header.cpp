@@ -33,7 +33,7 @@ int main()
         assert(source.size() == content.size());
 
         // Verify content using const reference to avoid non-const operator[]
-        const auto& const_source = source;
+        [[maybe_unused]] const auto& const_source = source;
         for (size_t i = 0; i < content.size(); ++i) {
             assert(const_source[i] == content[i]);
         }
