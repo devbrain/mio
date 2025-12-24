@@ -73,16 +73,16 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DMIO_BUILD_TESTS=ON \
-            -DMIO_BUILD_SINGLE_HEADER=ON
+            -DNEUTRINO_MIO_BUILD_TESTS=ON \
+            -DNEUTRINO_MIO_BUILD_SINGLE_HEADER=ON
 
       - name: Configure (Windows MSVC)
         if: matrix.compiler == 'msvc'
         run: |
           cmake -B build `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
-            -DMIO_BUILD_TESTS=ON `
-            -DMIO_BUILD_SINGLE_HEADER=ON
+            -DNEUTRINO_MIO_BUILD_TESTS=ON `
+            -DNEUTRINO_MIO_BUILD_SINGLE_HEADER=ON
 
       - name: Configure (Windows Clang)
         if: matrix.compiler == 'clang-cl'
@@ -90,8 +90,8 @@ jobs:
           cmake -B build `
             -T ClangCL `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
-            -DMIO_BUILD_TESTS=ON `
-            -DMIO_BUILD_SINGLE_HEADER=ON
+            -DNEUTRINO_MIO_BUILD_TESTS=ON `
+            -DNEUTRINO_MIO_BUILD_SINGLE_HEADER=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }}
@@ -116,7 +116,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-13 \
             -DCMAKE_CXX_STANDARD=20 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DMIO_BUILD_TESTS=ON
+            -DNEUTRINO_MIO_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build
